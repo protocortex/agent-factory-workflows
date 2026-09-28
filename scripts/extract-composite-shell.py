@@ -50,7 +50,12 @@ def extract_bash_steps(action_path):
         body = EXPRESSION_RE.sub(substitute, run_block)
         placeholders.update(step.get("env") or {})
 
-        preamble = "".join(f'{name}="placeholder"\n' for name in sorted(placeholders))
+        # export, not a bare assignment: shellcheck's SC2034 ("appears
+        # unused") only exempts a variable it can see is exported, and most
+        # of these placeholders stand in for step env: vars a subprocess
+        # reads from its environment, never referenced by name in the
+        # script body itself.
+        preamble = "".join(f'export {name}="placeholder"\n' for name in sorted(placeholders))
         script = "#!/usr/bin/env bash\n" + preamble + body
         if not script.endswith("\n"):
             script += "\n"

@@ -1,10 +1,14 @@
 name: "Run Claude Agent (hardened)"
 description: >
-  Wraps anthropics/claude-code-action@v1 with a fixed sandbox + credential-masking
-  baseline shared by every agent-factory stage. Every stage's untrusted input (issue
-  title/body, PR content) flows into `prompt`, so this exists to make the leakage
-  defenses apply everywhere by construction, instead of being copy-pasted five times
-  and drifting.
+  Runs the Claude Code CLI directly (installed via npm, not
+  anthropics/claude-code-action@v1) with a fixed sandbox + credential-masking
+  baseline shared by every agent-factory stage. Every stage's untrusted input
+  (issue title/body, PR content) flows into `prompt`, so this exists to make
+  the leakage defenses apply everywhere by construction, instead of being
+  copy-pasted five times and drifting. Runs the CLI directly rather than the
+  vendor action because that action requires installing Anthropic's Claude
+  GitHub App on the target repo even when authenticating with a plain API
+  key; the CLI itself has no such requirement, same as run-codex-agent.
 
 inputs:
   prompt:
@@ -17,12 +21,16 @@ inputs:
     required: false
     default: "claude-opus-4-8"
   max_turns:
+    description: "Accepted for interface parity with existing workflow calls. Not forwarded: the installed CLI has no turn-count flag, see max_cost_usd for the real guard."
     required: false
     default: "30"
-  claude_code_oauth_token:
+  max_cost_usd:
+    description: "--max-budget-usd value: hard-stops the run once this dollar amount of API spend is reached."
     required: false
+    default: "5"
   anthropic_api_key:
-    required: false
+    description: "Required. The CLI authenticates with this alone, no GitHub App installation needed."
+    required: true
   github_token:
     description: "Token used for gh/git operations Claude runs. Never exposed in plaintext to Claude's sandboxed Bash, see credentials.envVars below. Runs against api.github.com only."
     required: false
@@ -38,12 +46,16 @@ inputs:
 
 outputs:
   conclusion:
-    description: "'success' or 'failure', passed through from the underlying action."
-    value: ${{ steps.run.outputs.conclusion }}
+    description: "'success' or 'failure', from the CLI process's own exit status."
+    value: ${{ steps.run.conclusion }}
 
 runs:
   using: "composite"
   steps:
+    - name: Install Claude Code CLI
+      shell: bash
+      run: npm install --global @anthropic-ai/claude-code@2.1.283
+
     - name: Build sandbox settings
       id: settings
       shell: bash
@@ -70,45 +82,65 @@ runs:
 
         domains=$(jq -c --argjson extra "$extra_json" '. + $extra | unique' <<< "$baseline")
 
-        settings=$(jq -c \
+        settings_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/claude-settings-XXXXXX")
+        settings_file="${settings_dir}/settings.json"
+
+        # strictAllowlist denies a non-allowlisted domain outright instead of
+        # prompting; a headless -p run has no TTY to answer a prompt, so
+        # without this a disallowed request would just hang or error oddly.
+        jq -n \
           --argjson domains "$domains" \
           '{
             sandbox: {
               enabled: true,
-              network: { allowedDomains: $domains },
+              network: { allowedDomains: $domains, strictAllowlist: true },
               credentials: {
                 envVars: [
                   { name: "GH_TOKEN", mode: "mask", injectHosts: ["api.github.com"] },
                   { name: "GITHUB_TOKEN", mode: "mask", injectHosts: ["api.github.com"] },
                   { name: "AGENT_PAT", mode: "deny" },
-                  { name: "ANTHROPIC_API_KEY", mode: "deny" },
-                  { name: "CLAUDE_CODE_OAUTH_TOKEN", mode: "deny" }
+                  { name: "ANTHROPIC_API_KEY", mode: "deny" }
                 ]
               }
             }
-          }' <<< '{}')
+          }' > "$settings_file"
 
-        # GITHUB_OUTPUT can't hold raw newlines safely without the heredoc form;
-        # settings is already single-line (jq -c), so this is just belt-and-braces.
-        {
-          echo "json<<SETTINGS_EOF"
-          echo "$settings"
-          echo "SETTINGS_EOF"
-        } >> "$GITHUB_OUTPUT"
+        echo "settings_file=${settings_file}" >> "$GITHUB_OUTPUT"
+
+    - name: Write prompt to file
+      id: prompt
+      shell: bash
+      env:
+        # Passed as an env var, never spliced into the script body: the
+        # prompt carries untrusted issue/PR content, and GitHub Actions
+        # expands ${{ }} expressions before the shell runs, so inlining it
+        # directly into a heredoc would let a crafted value break out of the
+        # delimiter or inject shell syntax. printf with an env var has no
+        # such expansion step.
+        RAW_PROMPT: ${{ inputs.prompt }}
+      run: |
+        prompt_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/claude-prompt-XXXXXX")
+        prompt_file="${prompt_dir}/prompt.txt"
+        printf '%s' "$RAW_PROMPT" > "$prompt_file"
+        echo "prompt_file=${prompt_file}" >> "$GITHUB_OUTPUT"
 
     - name: Run Claude Code (sandboxed, credentials masked)
       id: run
-      uses: anthropics/claude-code-action@v1
-      with:
-        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
-        anthropic_api_key: ${{ inputs.anthropic_api_key }}
-        github_token: ${{ inputs.github_token }}
-        prompt: ${{ inputs.prompt }}
-        claude_args: |
-          --model ${{ inputs.model }}
-          --max-turns ${{ inputs.max_turns }}
-          --allowedTools "${{ inputs.allowed_tools }}"
-        # Sandbox forced on here, not left to each stage. credentials.envVars masks
-        # GH_TOKEN/GITHUB_TOKEN (usable by gh/git, unreadable in plaintext) and denies
-        # AGENT_PAT/API keys outright.
-        settings: ${{ steps.settings.outputs.json }}
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        CLAUDE_MODEL: ${{ inputs.model }}
+        CLAUDE_ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
+        CLAUDE_MAX_COST_USD: ${{ inputs.max_cost_usd }}
+        SETTINGS_FILE: ${{ steps.settings.outputs.settings_file }}
+        PROMPT_FILE: ${{ steps.prompt.outputs.prompt_file }}
+      run: |
+        claude -p \
+          --model "$CLAUDE_MODEL" \
+          --allowedTools "$CLAUDE_ALLOWED_TOOLS" \
+          --settings "$SETTINGS_FILE" \
+          --output-format json \
+          --max-budget-usd "$CLAUDE_MAX_COST_USD" \
+          < "$PROMPT_FILE"
