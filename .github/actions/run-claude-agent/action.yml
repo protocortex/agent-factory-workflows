@@ -1,0 +1,114 @@
+name: "Run Claude Agent (hardened)"
+description: >
+  Wraps anthropics/claude-code-action@v1 with a fixed sandbox + credential-masking
+  baseline shared by every agent-factory stage. Every stage's untrusted input (issue
+  title/body, PR content) flows into `prompt`, so this exists to make the leakage
+  defenses apply everywhere by construction, instead of being copy-pasted five times
+  and drifting.
+
+inputs:
+  prompt:
+    description: "Full prompt for this stage, including any untrusted issue/PR content."
+    required: true
+  allowed_tools:
+    description: "--allowedTools value, stage-specific. This is the per-stage scoping; the sandbox/credential rules below are the same for every stage regardless of this value."
+    required: true
+  model:
+    required: false
+    default: "claude-opus-4-8"
+  max_turns:
+    required: false
+    default: "30"
+  claude_code_oauth_token:
+    required: false
+  anthropic_api_key:
+    required: false
+  github_token:
+    description: "Token used for gh/git operations Claude runs. Never exposed in plaintext to Claude's sandboxed Bash, see credentials.envVars below. Runs against api.github.com only."
+    required: false
+  extra_allowed_domains:
+    description: >
+      Comma-separated list of additional domains the sandboxed Bash tool may reach,
+      on top of the baseline (GitHub + the common public package registries below).
+      Use this for a private registry (Artifactory, a company npm/PyPI mirror,
+      GitHub Packages under a different host, etc.) or any registry not already
+      covered. Wildcards allowed (e.g. "*.mycompany-registry.internal").
+    required: false
+    default: ""
+
+outputs:
+  conclusion:
+    description: "'success' or 'failure', passed through from the underlying action."
+    value: ${{ steps.run.outputs.conclusion }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build sandbox settings
+      id: settings
+      shell: bash
+      env:
+        EXTRA_DOMAINS: ${{ inputs.extra_allowed_domains }}
+      run: |
+        # Common package registries plus GitHub. EXTRA_DOMAINS extends this per-stage.
+        baseline='[
+          "github.com", "*.github.com", "api.github.com", "*.githubusercontent.com",
+          "registry.npmjs.org", "*.npmjs.org",
+          "pypi.org", "files.pythonhosted.org",
+          "crates.io", "static.crates.io", "index.crates.io",
+          "rubygems.org", "*.rubygems.org",
+          "repo.maven.apache.org", "repo1.maven.org", "*.gradle.org",
+          "api.nuget.org", "*.nuget.org",
+          "proxy.golang.org", "sum.golang.org",
+          "*.pkg.github.com"
+        ]'
+
+        extra_json="[]"
+        if [ -n "$EXTRA_DOMAINS" ]; then
+          extra_json=$(echo "$EXTRA_DOMAINS" | tr ',' '\n' | sed '/^\s*$/d' | sed 's/^ *//; s/ *$//' | jq -R . | jq -s .)
+        fi
+
+        domains=$(jq -c --argjson extra "$extra_json" '. + $extra | unique' <<< "$baseline")
+
+        settings=$(jq -c \
+          --argjson domains "$domains" \
+          '{
+            sandbox: {
+              enabled: true,
+              network: { allowedDomains: $domains },
+              credentials: {
+                envVars: [
+                  { name: "GH_TOKEN", mode: "mask", injectHosts: ["api.github.com"] },
+                  { name: "GITHUB_TOKEN", mode: "mask", injectHosts: ["api.github.com"] },
+                  { name: "AGENT_PAT", mode: "deny" },
+                  { name: "ANTHROPIC_API_KEY", mode: "deny" },
+                  { name: "CLAUDE_CODE_OAUTH_TOKEN", mode: "deny" }
+                ]
+              }
+            }
+          }' <<< '{}')
+
+        # GITHUB_OUTPUT can't hold raw newlines safely without the heredoc form;
+        # settings is already single-line (jq -c), so this is just belt-and-braces.
+        {
+          echo "json<<SETTINGS_EOF"
+          echo "$settings"
+          echo "SETTINGS_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run Claude Code (sandboxed, credentials masked)
+      id: run
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        anthropic_api_key: ${{ inputs.anthropic_api_key }}
+        github_token: ${{ inputs.github_token }}
+        prompt: ${{ inputs.prompt }}
+        claude_args: |
+          --model ${{ inputs.model }}
+          --max-turns ${{ inputs.max_turns }}
+          --allowedTools "${{ inputs.allowed_tools }}"
+        # Sandbox forced on here, not left to each stage. credentials.envVars masks
+        # GH_TOKEN/GITHUB_TOKEN (usable by gh/git, unreadable in plaintext) and denies
+        # AGENT_PAT/API keys outright.
+        settings: ${{ steps.settings.outputs.json }}

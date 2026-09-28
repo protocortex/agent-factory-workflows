@@ -1,0 +1,112 @@
+name: "Run Codex Agent (hardened)"
+description: >
+  Wraps openai/codex-action@v1 with a fixed sandbox baseline shared by every
+  agent-factory stage that runs on the Codex backend. Mirrors run-claude-agent's
+  external shape so a caller can dispatch to either backend with the same
+  input contract.
+
+inputs:
+  prompt:
+    description: "Full prompt for this stage, including any untrusted issue/PR content."
+    required: true
+  model:
+    description: "Model the agent should use. Leave empty to let Codex pick its own default."
+    required: false
+    default: ""
+  max_turns:
+    description: >
+      Accepted for interface parity with run-claude-agent's max_turns. Codex
+      exec and openai/codex-action@v1 have no turn-limit equivalent, so this
+      value is accepted but not forwarded to the underlying action.
+    required: false
+    default: "30"
+  openai_api_key:
+    description: "Secret used to start the Responses API proxy for Codex."
+    required: false
+  extra_allowed_domains:
+    description: >
+      Comma-separated list of additional domains the sandboxed Codex run may
+      reach, on top of the baseline (GitHub + the common public package
+      registries below). Use this for a private registry (Artifactory, a
+      company npm/PyPI mirror, GitHub Packages under a different host, etc.)
+      or any registry not already covered. Wildcards allowed
+      (e.g. "*.mycompany-registry.internal").
+    required: false
+    default: ""
+
+outputs:
+  conclusion:
+    description: "'success' or 'failure', from the underlying step's own conclusion."
+    value: ${{ steps.run.conclusion }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build sandbox settings
+      id: settings
+      shell: bash
+      env:
+        EXTRA_DOMAINS: ${{ inputs.extra_allowed_domains }}
+      run: |
+        # Common package registries plus GitHub. EXTRA_DOMAINS extends this per-stage.
+        baseline='[
+          "github.com", "*.github.com", "api.github.com", "*.githubusercontent.com",
+          "registry.npmjs.org", "*.npmjs.org",
+          "pypi.org", "files.pythonhosted.org",
+          "crates.io", "static.crates.io", "index.crates.io",
+          "rubygems.org", "*.rubygems.org",
+          "repo.maven.apache.org", "repo1.maven.org", "*.gradle.org",
+          "api.nuget.org", "*.nuget.org",
+          "proxy.golang.org", "sum.golang.org",
+          "*.pkg.github.com"
+        ]'
+
+        extra_json="[]"
+        if [ -n "$EXTRA_DOMAINS" ]; then
+          extra_json=$(echo "$EXTRA_DOMAINS" | tr ',' '\n' | sed '/^\s*$/d' | sed 's/^ *//; s/ *$//' | jq -R . | jq -s .)
+        fi
+
+        domains=$(jq -c --argjson extra "$extra_json" '. + $extra | unique' <<< "$baseline")
+
+        codex_home=$(mktemp -d "${RUNNER_TEMP:-/tmp}/codex-home-XXXXXX")
+
+        # Schema confirmed against the pinned Codex CLI (0.153.4) and the
+        # upstream permissions docs: filesystem writes for the checkout live
+        # under the ":workspace_roots" nested table, and network access needs
+        # both network.enabled and features.network_proxy to actually filter
+        # by domain instead of either blocking or allowing everything.
+        {
+          echo 'default_permissions = "agent-factory"'
+          echo
+          echo '[features]'
+          echo 'network_proxy = true'
+          echo
+          echo '[permissions.agent-factory.filesystem]'
+          echo '":minimal" = "read"'
+          echo
+          echo '[permissions.agent-factory.filesystem.":workspace_roots"]'
+          echo '"." = "write"'
+          echo
+          echo '[permissions.agent-factory.network]'
+          echo 'enabled = true'
+          echo
+          echo '[permissions.agent-factory.network.domains]'
+          echo "$domains" | jq -r '.[] | @json + " = \"allow\""'
+        } > "$codex_home/config.toml"
+
+        echo "codex_home=$codex_home" >> "$GITHUB_OUTPUT"
+
+    - name: Run Codex (sandboxed via permission profile)
+      id: run
+      uses: openai/codex-action@v1
+      with:
+        openai-api-key: ${{ inputs.openai_api_key }}
+        prompt: ${{ inputs.prompt }}
+        model: ${{ inputs.model }}
+        codex-home: ${{ steps.settings.outputs.codex_home }}
+        permission-profile: "agent-factory"
+        # Pinned explicitly so the profile schema this action generates can't
+        # silently drift out from under it if the vendor action's own default
+        # ever changes to "latest".
+        codex-version: "0.153.4"
+        safety-strategy: "drop-sudo"

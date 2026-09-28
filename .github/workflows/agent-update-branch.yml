@@ -1,0 +1,123 @@
+name: Agent Update Branch (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pr_number: { required: true, type: number }
+      branch: { required: true, type: string }
+      branch_head_sha: { required: true, type: string }
+      base_ref: { required: true, type: string }
+      install_command: { required: false, type: string, default: "npm ci" }
+      build_command: { required: false, type: string, default: "npm run build" }
+      node_version: { required: false, type: string, default: "22" }
+      model: { required: false, type: string, default: "claude-opus-4-8" }
+      timeout_minutes: { required: false, type: number, default: 60 }
+      extra_allowed_domains: { required: false, type: string, default: "" }
+      agent_provider: { required: false, type: string, default: "claude" }
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: { required: false }
+      ANTHROPIC_API_KEY: { required: false }
+      OPENAI_API_KEY: { required: false }
+
+jobs:
+  update-branch:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    env:
+      PR_NUMBER: ${{ inputs.pr_number }}
+      BRANCH: ${{ inputs.branch }}
+      BASE_REF: ${{ inputs.base_ref }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Transition labels
+        run: |
+          gh pr edit "$PR_NUMBER" --remove-label "agent:update-branch" || true
+          gh pr edit "$PR_NUMBER" --remove-label "agent:blocked" || true
+          gh pr edit "$PR_NUMBER" --add-label "agent:in-progress"
+
+      - name: Validate agent_provider
+        env:
+          AGENT_PROVIDER: ${{ inputs.agent_provider }}
+        run: |
+          case "$AGENT_PROVIDER" in
+            claude|codex) ;;
+            *)
+              echo "::error::agent_provider must be 'claude' or 'codex', got '$AGENT_PROVIDER'"
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch_head_sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install dependencies
+        run: ${{ inputs.install_command }}
+
+      - name: Build prompt
+        id: prompt
+        run: |
+          cat <<'PROMPT_BLOCK' >> "$GITHUB_OUTPUT"
+          text<<PROMPT_EOF
+          REPO: ${{ github.repository }}
+          PR NUMBER: ${{ inputs.pr_number }}
+          BASE BRANCH: ${{ inputs.base_ref }}
+
+          This PR's branch is out of date or conflicting with `${{ inputs.base_ref }}`. Fetch and
+          merge `origin/${{ inputs.base_ref }}` into the current branch (merge, not rebase, since
+          this branch may already be pushed and reviewed). Resolve any conflicts using the
+          intent of both sides, run this repo's build (`${{ inputs.build_command }}`) and test
+          command afterward, then commit and push.
+
+          If a conflict is ambiguous (both sides changed the same logic meaningfully), stop and
+          post a PR comment explaining the conflict instead of guessing which side should win.
+          PROMPT_EOF
+          PROMPT_BLOCK
+
+      - name: Update branch agent (Claude)
+        if: inputs.agent_provider == 'claude'
+        uses: protocortex/agent-factory-workflows/.github/actions/run-claude-agent@v1.1.0
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: ${{ inputs.model }}
+          max_turns: "25"
+          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git fetch:*),Bash(git merge:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(npm run:*),Bash(npm test:*),Bash(gh pr comment:*)"
+          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          prompt: ${{ steps.prompt.outputs.text }}
+
+      - name: Update branch agent (Codex)
+        if: inputs.agent_provider == 'codex'
+        uses: protocortex/agent-factory-workflows/.github/actions/run-codex-agent@v1.1.0
+        with:
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          model: ${{ inputs.model }}
+          max_turns: "25"
+          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          prompt: ${{ steps.prompt.outputs.text }}
+
+      - name: Mark blocked on failure
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr edit "$PR_NUMBER" --add-label "agent:blocked" || true
+          gh pr comment "$PR_NUMBER" --body "\`agent:update-branch\` run failed. Check the [workflow run]($RUN_URL). Re-add \`agent:update-branch\` to retry."
+
+      - name: Always remove in-progress
+        if: always()
+        run: gh pr edit "$PR_NUMBER" --remove-label "agent:in-progress" || true

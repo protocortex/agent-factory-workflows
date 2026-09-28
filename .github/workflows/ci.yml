@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install actionlint
+        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      - name: actionlint
+        run: ./actionlint -color
+
+  self-lint:
+    # actionlint only understands workflow files, not composite action.yml
+    # files, so it never shellchecks the run: blocks inside
+    # .github/actions/*/action.yml. This job closes that gap.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify shellcheck is available
+        run: shellcheck --version
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: "Shellcheck composite action run: blocks"
+        run: python3 scripts/extract-composite-shell.py
