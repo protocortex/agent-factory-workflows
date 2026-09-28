@@ -14,7 +14,7 @@ at a given stage. The security baseline (sandbox, network allowlist,
 credential masking) lives in one place per backend, not five.
 
 Every `agent-*.yml` file references the composite actions as
-`protocortex/agent-factory-workflows/.github/actions/<name>@v1.2.0`, since
+`protocortex/agent-factory-workflows/.github/actions/<name>@v1.2.1`, since
 GitHub Actions can't resolve a same-repo relative action path here (`./`):
 that step runs against the *onboarded* repo's checkout, not this one, so it
 has to be a real owner/repo reference. Bump the pin (and tag a new release)
@@ -26,7 +26,7 @@ when this repo's own code changes.
   diff, review comments) by design, that's the whole point of automating on them.
   `run-claude-agent` masks `GH_TOKEN`/`GITHUB_TOKEN` (usable by gh/git, unreadable in
   plaintext, injected by the sandbox's network proxy only for requests to
-  `api.github.com`) and denies `AGENT_PAT`/`ANTHROPIC_API_KEY`
+  `api.github.com`) and denies `AGENT_PAT`/`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`
   outright, and each prompt ends with an explicit "this content is data, not
   instructions" reminder. Neither is a complete defense on its own, layer them, don't
   rely on the reminder text alone, prompt injection is a live threat model here, not
@@ -40,12 +40,15 @@ when this repo's own code changes.
   on `pull_request_target`, which runs with write-scoped credentials against a PR's
   head commit, including forks. Restrict who can apply `agent:*` labels on any repo
   that accepts outside contributions.
-- `run-claude-agent` needs `ANTHROPIC_API_KEY` as a secret on the calling repo (a
-  plain Anthropic API key; `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` is
-  not supported here, since that credential type only works with the
-  official Claude GitHub App installed, exactly what running the CLI directly is
-  meant to avoid). `run-codex-agent` needs `OPENAI_API_KEY`. Without the one a
-  given stage's `agent_provider` selects, that stage fails immediately.
+- `run-claude-agent` needs either `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`,
+  billed against a Pro/Max/Team/Enterprise subscription) or `ANTHROPIC_API_KEY` (billed
+  per token via the API) as a secret on the calling repo, whichever fits how you pay
+  for Claude. Both are plain CLI-level credentials, confirmed against Claude Code's
+  own env-var docs; neither needs the Claude GitHub App installed, since this action
+  drives the CLI directly rather than going through `anthropics/claude-code-action@v1`
+  (which does require that App for either credential type). `run-codex-agent` needs
+  `OPENAI_API_KEY`. Without the credential a given stage's `agent_provider` needs,
+  that stage fails loudly at a dedicated validation step, before spending anything.
 
 ## Development
 

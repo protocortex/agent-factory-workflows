@@ -14,6 +14,7 @@ on:
       extra_allowed_domains: { required: false, type: string, default: "" }
       agent_provider: { required: false, type: string, default: "claude" }
     secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: { required: false }
       ANTHROPIC_API_KEY: { required: false }
       OPENAI_API_KEY: { required: false }
 
@@ -94,8 +95,9 @@ jobs:
 
       - name: Review agent (Claude)
         if: inputs.agent_provider == 'claude'
-        uses: protocortex/agent-factory-workflows/.github/actions/run-claude-agent@v1.2.0
+        uses: protocortex/agent-factory-workflows/.github/actions/run-claude-agent@v1.2.1
         with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           model: ${{ inputs.model }}
           max_turns: "25"
@@ -105,7 +107,7 @@ jobs:
 
       - name: Review agent (Codex)
         if: inputs.agent_provider == 'codex'
-        uses: protocortex/agent-factory-workflows/.github/actions/run-codex-agent@v1.2.0
+        uses: protocortex/agent-factory-workflows/.github/actions/run-codex-agent@v1.2.1
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ inputs.model }}

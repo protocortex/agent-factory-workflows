@@ -7,8 +7,9 @@ description: >
   the leakage defenses apply everywhere by construction, instead of being
   copy-pasted five times and drifting. Runs the CLI directly rather than the
   vendor action because that action requires installing Anthropic's Claude
-  GitHub App on the target repo even when authenticating with a plain API
-  key; the CLI itself has no such requirement, same as run-codex-agent.
+  GitHub App on the target repo, for either an OAuth token or a plain API
+  key; the CLI itself has no such requirement for either credential type,
+  same as run-codex-agent has none for its own.
 
 inputs:
   prompt:
@@ -28,9 +29,16 @@ inputs:
     description: "--max-budget-usd value: hard-stops the run once this dollar amount of API spend is reached."
     required: false
     default: "5"
+  claude_code_oauth_token:
+    description: >
+      OAuth access token from `claude setup-token` (Pro/Max subscription auth,
+      no separate API billing). Either this or anthropic_api_key is required;
+      the CLI reads whichever is set, no GitHub App installation needed for
+      either.
+    required: false
   anthropic_api_key:
-    description: "Required. The CLI authenticates with this alone, no GitHub App installation needed."
-    required: true
+    description: "Plain Anthropic API key. Either this or claude_code_oauth_token is required."
+    required: false
   github_token:
     description: "Token used for gh/git operations Claude runs. Never exposed in plaintext to Claude's sandboxed Bash, see credentials.envVars below. Runs against api.github.com only."
     required: false
@@ -99,7 +107,8 @@ runs:
                   { name: "GH_TOKEN", mode: "mask", injectHosts: ["api.github.com"] },
                   { name: "GITHUB_TOKEN", mode: "mask", injectHosts: ["api.github.com"] },
                   { name: "AGENT_PAT", mode: "deny" },
-                  { name: "ANTHROPIC_API_KEY", mode: "deny" }
+                  { name: "ANTHROPIC_API_KEY", mode: "deny" },
+                  { name: "CLAUDE_CODE_OAUTH_TOKEN", mode: "deny" }
                 ]
               }
             }
@@ -124,10 +133,26 @@ runs:
         printf '%s' "$RAW_PROMPT" > "$prompt_file"
         echo "prompt_file=${prompt_file}" >> "$GITHUB_OUTPUT"
 
+    - name: Validate a Claude credential was given
+      shell: bash
+      env:
+        HAS_OAUTH: ${{ inputs.claude_code_oauth_token != '' }}
+        HAS_API_KEY: ${{ inputs.anthropic_api_key != '' }}
+      run: |
+        if [ "$HAS_OAUTH" != "true" ] && [ "$HAS_API_KEY" != "true" ]; then
+          echo "::error::run-claude-agent needs either claude_code_oauth_token or anthropic_api_key; neither was provided." >&2
+          exit 1
+        fi
+
     - name: Run Claude Code (sandboxed, credentials masked)
       id: run
       shell: bash
       env:
+        # Only one of these is ever expected to be non-empty (install.sh
+        # itself refuses to configure both secrets on the same repo); the
+        # CLI's own precedence, ANTHROPIC_API_KEY wins if both are set, only
+        # matters if that guard was bypassed.
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_code_oauth_token }}
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
         GH_TOKEN: ${{ inputs.github_token }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
