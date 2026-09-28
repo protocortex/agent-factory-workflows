@@ -60,6 +60,37 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Install sandbox dependencies (bubblewrap, socat)
+      # Confirmed empirically 2026-09-28: without these, Claude Code's sandbox
+      # can't start on a Linux runner, and it silently falls back to running
+      # commands unsandboxed instead of failing loudly (its own documented
+      # default: "shows a warning and runs commands without sandboxing").
+      # With the sandbox never active, its network proxy never starts either,
+      # so the credentials.envVars mask mechanism below has nothing to
+      # substitute through and GH_TOKEN/GITHUB_TOKEN come through empty to
+      # gh, not masked and not real, just gone.
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y bubblewrap socat
+
+        # Ubuntu 24.04+ default AppArmor policy blocks bubblewrap from
+        # creating the user namespaces it needs; only apply the exception
+        # when the restriction is actually in effect.
+        restrict=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo "")
+        if [ "$restrict" = "1" ]; then
+          sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
+        abi <abi/4.0>,
+        include <tunables/global>
+
+        profile bwrap /usr/bin/bwrap flags=(unconfined) {
+          userns,
+          include if exists <local/bwrap>
+        }
+        EOF
+          sudo systemctl reload apparmor
+        fi
+
     - name: Install Claude Code CLI
       shell: bash
       run: npm install --global @anthropic-ai/claude-code@2.1.283
@@ -101,6 +132,13 @@ runs:
           '{
             sandbox: {
               enabled: true,
+              # Without this, a sandbox that fails to start (missing deps,
+              # unsupported platform) falls back to running unsandboxed with
+              # a warning instead of failing the step: exactly the failure
+              # mode that silently emptied GH_TOKEN/GITHUB_TOKEN instead of
+              # masking them, confirmed empirically 2026-09-28. A crash here
+              # is more honest than a confusing downstream auth error.
+              failIfUnavailable: true,
               network: { allowedDomains: $domains, strictAllowlist: true },
               credentials: {
                 envVars: [

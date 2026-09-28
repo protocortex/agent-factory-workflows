@@ -95,7 +95,7 @@ jobs:
 
       - name: Review agent (Claude)
         if: inputs.agent_provider == 'claude'
-        uses: protocortex/agent-factory-workflows/.github/actions/run-claude-agent@v1.2.1
+        uses: protocortex/agent-factory-workflows/.github/actions/run-claude-agent@v1.2.2
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -107,7 +107,7 @@ jobs:
 
       - name: Review agent (Codex)
         if: inputs.agent_provider == 'codex'
-        uses: protocortex/agent-factory-workflows/.github/actions/run-codex-agent@v1.2.1
+        uses: protocortex/agent-factory-workflows/.github/actions/run-codex-agent@v1.2.2
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ inputs.model }}
