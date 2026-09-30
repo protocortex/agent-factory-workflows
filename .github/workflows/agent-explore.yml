@@ -5,7 +5,8 @@ on:
     inputs:
       issue_number: { required: true, type: number }
       issue_title: { required: true, type: string }
-      model: { required: false, type: string, default: "claude-opus-4-8" }
+      model: { required: false, type: string, default: "claude-sonnet-5" }
+      effort: { required: false, type: string, default: "medium" }
       timeout_minutes: { required: false, type: number, default: 60 }
       extra_allowed_domains: { required: false, type: string, default: "" }
       agent_provider: { required: false, type: string, default: "claude" }
@@ -86,13 +87,14 @@ jobs:
       - name: Triage agent (Claude)
         # See ../actions/run-claude-agent/action.yml for the sandbox + credential-masking
         # baseline this wraps. Update the owner/repo@ref below if you copied this file
-        # somewhere other than protocortex/agent-factory-workflows.
+        # somewhere other than protocortex/agent-workflows.
         if: inputs.agent_provider == 'claude'
-        uses: protocortex/agent-factory-workflows/.github/actions/run-claude-agent@v1.2.2
+        uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1.3.0
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           model: ${{ inputs.model }}
+          effort: ${{ inputs.effort }}
           max_turns: "15"
           allowed_tools: "Read,Glob,Grep,Bash(git log:*),Bash(git blame:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh search issues:*)"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
@@ -100,7 +102,7 @@ jobs:
 
       - name: Triage agent (Codex)
         if: inputs.agent_provider == 'codex'
-        uses: protocortex/agent-factory-workflows/.github/actions/run-codex-agent@v1.2.2
+        uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1.3.0
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ inputs.model }}

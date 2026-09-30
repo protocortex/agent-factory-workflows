@@ -20,7 +20,11 @@ inputs:
     required: true
   model:
     required: false
-    default: "claude-opus-4-8"
+    default: "claude-sonnet-5"
+  effort:
+    description: "--effort value (low, medium, high, xhigh, max). Trades cost/speed for reasoning depth."
+    required: false
+    default: "medium"
   max_turns:
     description: "Accepted for interface parity with existing workflow calls. Not forwarded: the installed CLI has no turn-count flag, see max_cost_usd for the real guard."
     required: false
@@ -195,6 +199,7 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         CLAUDE_MODEL: ${{ inputs.model }}
+        CLAUDE_EFFORT: ${{ inputs.effort }}
         CLAUDE_ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
         CLAUDE_MAX_COST_USD: ${{ inputs.max_cost_usd }}
         SETTINGS_FILE: ${{ steps.settings.outputs.settings_file }}
@@ -202,6 +207,7 @@ runs:
       run: |
         claude -p \
           --model "$CLAUDE_MODEL" \
+          --effort "$CLAUDE_EFFORT" \
           --allowedTools "$CLAUDE_ALLOWED_TOOLS" \
           --settings "$SETTINGS_FILE" \
           --output-format json \

@@ -1,4 +1,4 @@
-# agent-factory-workflows
+# agent-workflows
 
 Reusable GitHub Actions workflows for the agent-factory pipeline. Each stage
 workflow calls a local composite action (`run-claude-agent` or
@@ -14,7 +14,7 @@ at a given stage. The security baseline (sandbox, network allowlist,
 credential masking) lives in one place per backend, not five.
 
 Every `agent-*.yml` file references the composite actions as
-`protocortex/agent-factory-workflows/.github/actions/<name>@v1.2.2`, since
+`protocortex/agent-workflows/.github/actions/<name>@v1.2.2`, since
 GitHub Actions can't resolve a same-repo relative action path here (`./`):
 that step runs against the *onboarded* repo's checkout, not this one, so it
 has to be a real owner/repo reference. Bump the pin (and tag a new release)
