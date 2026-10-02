@@ -17,11 +17,11 @@ inputs:
   endpoint:
     description: "Full URL of the Worker's /commit endpoint."
     required: false
-    default: "https://protocortex-app.main-account-786.workers.dev/commit"
+    default: "https://protocortex-agent-worker.main-account-786.workers.dev/commit"
   audience:
     description: "OIDC audience the Worker expects."
     required: false
-    default: "https://factory.protocortex.ai"
+    default: "https://agent.protocortex.ai"
   push_fallback:
     description: "Commit and push from the runner when the Worker route is not possible."
     required: false

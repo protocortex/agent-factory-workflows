@@ -14,11 +14,11 @@ inputs:
   endpoint:
     description: "Full URL of the Worker's /comment endpoint."
     required: false
-    default: "https://protocortex-app.main-account-786.workers.dev/comment"
+    default: "https://protocortex-agent-worker.main-account-786.workers.dev/comment"
   audience:
     description: "OIDC audience the Worker expects."
     required: false
-    default: "https://factory.protocortex.ai"
+    default: "https://agent.protocortex.ai"
 
 runs:
   using: "composite"
