@@ -24,7 +24,7 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    timeout-minutes: ${{ fromJSON(vars.AGENT_TIMEOUT_MINUTES || inputs.timeout_minutes) }}
     permissions:
       contents: read
       pull-requests: write
@@ -120,11 +120,11 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          model: ${{ inputs.model }}
-          effort: ${{ inputs.effort }}
+          model: ${{ vars.AGENT_REVIEW_MODEL || vars.AGENT_MODEL || inputs.model }}
+          effort: ${{ vars.AGENT_REVIEW_EFFORT || vars.AGENT_EFFORT || inputs.effort }}
           max_turns: "25"
           allowed_tools: "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(npm run:*),Bash(npm test:*),Bash(cargo build:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(pytest:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*)"
-          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          extra_allowed_domains: ${{ vars.AGENT_EXTRA_ALLOWED_DOMAINS || inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
       - name: Review agent (Codex)
@@ -133,9 +133,9 @@ jobs:
         uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          model: ${{ inputs.model }}
+          model: ${{ vars.AGENT_REVIEW_MODEL || vars.AGENT_MODEL || inputs.model }}
           max_turns: "25"
-          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          extra_allowed_domains: ${{ vars.AGENT_EXTRA_ALLOWED_DOMAINS || inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
       - name: Parse the review

@@ -20,7 +20,7 @@ on:
 jobs:
   triage:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    timeout-minutes: ${{ fromJSON(vars.AGENT_TIMEOUT_MINUTES || inputs.timeout_minutes) }}
     permissions:
       contents: read
       issues: write
@@ -97,11 +97,11 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          model: ${{ inputs.model }}
-          effort: ${{ inputs.effort }}
+          model: ${{ vars.AGENT_TRIAGE_MODEL || vars.AGENT_MODEL || inputs.model }}
+          effort: ${{ vars.AGENT_TRIAGE_EFFORT || vars.AGENT_EFFORT || inputs.effort }}
           max_turns: "15"
           allowed_tools: "Read,Glob,Grep,Bash(git log:*),Bash(git blame:*),Bash(gh issue view:*),Bash(gh search issues:*)"
-          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          extra_allowed_domains: ${{ vars.AGENT_EXTRA_ALLOWED_DOMAINS || inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
       - name: Triage agent (Codex)
@@ -110,9 +110,9 @@ jobs:
         uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          model: ${{ inputs.model }}
+          model: ${{ vars.AGENT_TRIAGE_MODEL || vars.AGENT_MODEL || inputs.model }}
           max_turns: "15"
-          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          extra_allowed_domains: ${{ vars.AGENT_EXTRA_ALLOWED_DOMAINS || inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
       - name: Check the agent returned a triage comment
