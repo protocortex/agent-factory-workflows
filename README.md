@@ -93,6 +93,25 @@ Details that are easy to miss:
   and `comment_audience` to point at your own Worker. The defaults use the Worker's `workers.dev`
   address, because Cloudflare Bot Fight Mode on the custom domain challenges GitHub runners.
 
+## Changing the settings without editing a stub
+
+The generated stubs are overwritten when the App provisions a repo again, so don't edit them.
+Set these repository variables (Settings, Secrets and variables, Actions, Variables) instead.
+A variable wins over the value the stub passes, which acts as the default.
+
+| Variable | Overrides |
+| --- | --- |
+| `AGENT_MODEL` | the model, for every stage |
+| `AGENT_EFFORT` | the reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`) |
+| `AGENT_TIMEOUT_MINUTES` | the job timeout |
+| `AGENT_EXTRA_ALLOWED_DOMAINS` | extra domains the agent may reach (comma separated), for a private registry |
+| `AGENT_<STAGE>_MODEL`, `AGENT_<STAGE>_EFFORT` | one stage only, which beats the shared variable |
+
+`<STAGE>` is `TRIAGE`, `IMPLEMENT`, `IMPLEMENT_PR`, `REVIEW` or `UPDATE_BRANCH`. For example,
+`AGENT_REVIEW_MODEL=claude-opus-4-8` gives review a stronger model and leaves the rest alone.
+The review that implement starts after opening a PR is the review stage, so it reads
+`AGENT_REVIEW_*`. Install and build commands are not variables yet.
+
 ## Edge cases for a repo that calls these workflows
 
 - **Labels trigger on a fresh `labeled` event.** A label added before the workflow

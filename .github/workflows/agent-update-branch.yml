@@ -23,7 +23,7 @@ on:
 jobs:
   update-branch:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    timeout-minutes: ${{ fromJSON(vars.AGENT_TIMEOUT_MINUTES || inputs.timeout_minutes) }}
     permissions:
       contents: write
       pull-requests: write
@@ -118,11 +118,11 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          model: ${{ inputs.model }}
-          effort: ${{ inputs.effort }}
+          model: ${{ vars.AGENT_UPDATE_BRANCH_MODEL || vars.AGENT_MODEL || inputs.model }}
+          effort: ${{ vars.AGENT_UPDATE_BRANCH_EFFORT || vars.AGENT_EFFORT || inputs.effort }}
           max_turns: "25"
           allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(git merge:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(npm run:*),Bash(npm test:*),Bash(cargo build:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(make:*),Bash(just:*),Bash(pytest:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh pr comment:*)"
-          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          extra_allowed_domains: ${{ vars.AGENT_EXTRA_ALLOWED_DOMAINS || inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
       - name: Update branch agent (Codex)
@@ -130,9 +130,9 @@ jobs:
         uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          model: ${{ inputs.model }}
+          model: ${{ vars.AGENT_UPDATE_BRANCH_MODEL || vars.AGENT_MODEL || inputs.model }}
           max_turns: "25"
-          extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
+          extra_allowed_domains: ${{ vars.AGENT_EXTRA_ALLOWED_DOMAINS || inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
       - name: Check the branch is up to date
