@@ -60,6 +60,9 @@ outputs:
   conclusion:
     description: "'success' or 'failure', from the CLI process's own exit status."
     value: ${{ steps.run.conclusion }}
+  result_file:
+    description: "Path to a file holding the agent's final reply as plain text. Lets a caller post that reply itself, with its own credentials, instead of giving the agent a write token."
+    value: ${{ steps.run.outputs.result_file }}
 
 runs:
   using: "composite"
@@ -205,6 +208,9 @@ runs:
         SETTINGS_FILE: ${{ steps.settings.outputs.settings_file }}
         PROMPT_FILE: ${{ steps.prompt.outputs.prompt_file }}
       run: |
+        result_json="${RUNNER_TEMP}/claude-result.json"
+        result_file="${RUNNER_TEMP}/claude-result.md"
+        status=0
         claude -p \
           --model "$CLAUDE_MODEL" \
           --effort "$CLAUDE_EFFORT" \
@@ -212,4 +218,8 @@ runs:
           --settings "$SETTINGS_FILE" \
           --output-format json \
           --max-budget-usd "$CLAUDE_MAX_COST_USD" \
-          < "$PROMPT_FILE"
+          < "$PROMPT_FILE" > "$result_json" || status=$?
+        cat "$result_json"
+        jq -r '.result // ""' "$result_json" > "$result_file" 2>/dev/null || : > "$result_file"
+        echo "result_file=${result_file}" >> "$GITHUB_OUTPUT"
+        exit "$status"
