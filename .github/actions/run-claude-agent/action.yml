@@ -20,7 +20,7 @@ inputs:
     required: true
   model:
     required: false
-    default: "claude-sonnet-5"
+    default: "claude-sonnet-5-5"
   effort:
     description: "--effort value (low, medium, high, xhigh, max). Trades cost/speed for reasoning depth."
     required: false
