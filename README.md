@@ -158,6 +158,12 @@ the floating major tag (`v1`) to the same commit. A major change creates `v2` an
 alone, then opens an issue "Bump FACTORY_REF to v2". Installed repos only move to a new major
 when the owner sets the Worker's `FACTORY_REF` to it and reprovisions.
 
+Try a change before it reaches everyone with the canary tag. `v1-canary` follows every push to
+`main`, including commits that make no release. Point a repo's stub at
+`protocortex/agent-workflows/.github/workflows/agent-triage.yml@v1-canary` to test it there. The
+inner actions those workflows call are pinned to `@v1`, so the canary tests workflow file
+changes but not an unreleased change to an inner action.
+
 To roll back, run the Release workflow by hand (Actions, Release, Run workflow) with
 `rollback_to` set to a version such as `v1.6.1`. It moves the floating major tag back to
 that release. Tags made by the workflow are unsigned lightweight tags created by

@@ -48,6 +48,24 @@ jobs:
           gh api -X PATCH "repos/${REPO}/git/refs/tags/${major}" -f sha="$sha" -F force=true >/dev/null
           echo "Moved ${major} to ${ROLLBACK_TO} (${sha})"
 
+      - name: Move the canary tag to main
+        # `v1-canary` follows every push to main, released or not, so a repo can try a change
+        # before it reaches `v1`. It only moves tags, never commits.
+        if: inputs.rollback_to == ''
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          [ -n "$latest" ] || exit 0
+          canary="${latest%%.*}-canary"
+          if gh api -X PATCH "repos/${REPO}/git/refs/tags/${canary}" -f sha="$SHA" -F force=true >/dev/null 2>&1; then
+            echo "Moved ${canary} to ${SHA}"
+          else
+            gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${canary}" -f sha="$SHA" >/dev/null
+            echo "Created ${canary} at ${SHA}"
+          fi
+
       - name: Work out the next version
         if: inputs.rollback_to == ''
         id: next
