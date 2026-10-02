@@ -63,6 +63,15 @@ the workflow token instead, so a result is never lost. To self-host, set `commen
 `OIDC_AUDIENCE`. This needs the calling job to grant `id-token: write`, which the
 generated stubs already do.
 
+## Who opens the pull request
+
+The implement stage works the same way for pull requests. The agent pushes its branch and
+ends with the PR description as its final reply. A separate step then sends the title,
+description and branch to the Worker's `/pull-request` endpoint with this run's GitHub OIDC
+token, and the Worker opens a draft PR as `protocortex[bot]`. If the endpoint can't be
+reached, the step opens the PR with the workflow token instead. Set `pr_endpoint` and
+`comment_audience` to point at your own Worker. The Codex path still opens its own PR.
+
 ## Edge cases for a repo that calls these workflows
 
 - **Labels trigger on a fresh `labeled` event.** A label added before the workflow
