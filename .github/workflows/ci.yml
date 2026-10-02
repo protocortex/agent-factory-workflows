@@ -30,4 +30,53 @@ jobs:
         run: pip install pyyaml
 
       - name: "Shellcheck composite action run: blocks"
-        run: python3 scripts/extract-composite-shell.py
+        shell: python3 {0}
+        run: |
+          # actionlint only reads workflow files, so the bash run: blocks inside the composite
+          # action.yml files never get shellchecked. Extract each block, swap the expression
+          # syntax and declared env names for placeholder variables so shellcheck can parse it,
+          # then lint the result. Extracting nothing is a failure, not a pass.
+          import glob, os, re, subprocess, sys, tempfile
+          import yaml
+
+          EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+
+          def placeholder(expression):
+              name = re.sub(r"[^A-Za-z0-9_]", "_", expression).strip("_").upper()
+              return "GHA_" + name if name else "GHA_EXPR"
+
+          def bash_steps(path):
+              with open(path) as handle:
+                  doc = yaml.safe_load(handle) or {}
+              for index, step in enumerate((doc.get("runs") or {}).get("steps") or []):
+                  run = step.get("run")
+                  if run is None or step.get("shell", "bash") != "bash":
+                      continue
+                  names = set()
+
+                  def substitute(match):
+                      names.add(placeholder(match.group(1)))
+                      return "$" + placeholder(match.group(1))
+
+                  body = EXPRESSION.sub(substitute, run)
+                  names.update(step.get("env") or {})
+                  # export, so shellcheck doesn't flag placeholders for env vars read by subprocesses.
+                  exports = "".join('export %s="placeholder"\n' % name for name in sorted(names))
+                  script = "#!/usr/bin/env bash\n" + exports + body
+                  yield index, step.get("name", "step-%d" % index), script if script.endswith("\n") else script + "\n"
+
+          files = sorted(glob.glob(".github/actions/*/action.yml"))
+          if not files:
+              sys.exit("no composite action files found")
+          with tempfile.TemporaryDirectory() as tmp:
+              written = []
+              for path in files:
+                  action = os.path.basename(os.path.dirname(path))
+                  for index, name, script in bash_steps(path):
+                      out = os.path.join(tmp, "%s__%d__%s.sh" % (action, index, re.sub(r"[^A-Za-z0-9_-]", "_", name)))
+                      with open(out, "w") as handle:
+                          handle.write(script)
+                      written.append(out)
+              if not written:
+                  sys.exit("error: matched composite action files but extracted no bash run: blocks")
+              sys.exit(subprocess.run(["shellcheck", "--severity=warning", *written]).returncode)
