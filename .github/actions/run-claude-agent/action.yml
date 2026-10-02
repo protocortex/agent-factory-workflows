@@ -143,7 +143,7 @@ runs:
               # masking them, confirmed empirically 2026-09-28. A crash here
               # is more honest than a confusing downstream auth error.
               failIfUnavailable: true,
-              network: { allowedDomains: $domains, strictAllowlist: true },
+              network: { allowedDomains: $domains, strictAllowlist: true, tlsTerminate: true },
               credentials: {
                 envVars: [
                   { name: "GH_TOKEN", mode: "mask", injectHosts: ["api.github.com"] },
