@@ -40,13 +40,13 @@ jobs:
       - name: Refuse closed PR
         if: inputs.pr_state != 'open'
         run: |
-          gh pr edit "$PR_NUMBER" --remove-label "agent:implement" || true
+          gh pr edit "$PR_NUMBER" --remove-label "agent:implement-pr" || true
           gh pr comment "$PR_NUMBER" --body "Refused to run: PR #${PR_NUMBER} is not open."
 
       - name: Transition labels
         if: inputs.pr_state == 'open'
         run: |
-          gh pr edit "$PR_NUMBER" --remove-label "agent:implement" || true
+          gh pr edit "$PR_NUMBER" --remove-label "agent:implement-pr" || true
           gh pr edit "$PR_NUMBER" --remove-label "agent:blocked" || true
           gh pr edit "$PR_NUMBER" --add-label "agent:in-progress"
 
@@ -77,6 +77,11 @@ jobs:
           git config --global user.name "protocortex[bot]"
           git config --global user.email "${bot_id:+${bot_id}+}protocortex[bot]@users.noreply.github.com"
 
+      - name: Switch to the PR branch
+        # The checkout is detached at the PR head, so the agent has no branch to push. Name it.
+        if: inputs.pr_state == 'open'
+        run: git switch -C "$BRANCH"
+
       - name: Detect Node project
         id: node
         # The stubs default to npm commands. A repo without a package.json (Rust, Python, ...) has
@@ -105,10 +110,11 @@ jobs:
 
           Read the review comments and requested-changes feedback on this PR
           (`gh pr view ${{ inputs.pr_number }} --comments`, and inline review comments via
-          `gh api repos/{owner}/{repo}/pulls/${{ inputs.pr_number }}/comments`). Address every
+          `gh api repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}/comments`). Address every
           unresolved comment: make the code change, or reply explaining why you didn't (e.g. it's
           out of scope or you disagree, with reasoning). Commit and push your changes to the
-          existing branch, do not open a new PR or force-push over unrelated history.
+          existing branch, do not open a new PR or force-push over unrelated history. You are on
+          the branch `${{ inputs.branch }}`, push it with `git push origin ${{ inputs.branch }}`.
 
           Run this repo's build (`${{ inputs.build_command }}`) and test command before pushing.
 
@@ -120,6 +126,7 @@ jobs:
           PROMPT_BLOCK
 
       - name: Address review feedback (Claude)
+        id: agent
         if: inputs.pr_state == 'open' && inputs.agent_provider == 'claude'
         uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1
         with:
@@ -129,7 +136,7 @@ jobs:
           model: ${{ inputs.model }}
           effort: ${{ inputs.effort }}
           max_turns: "30"
-          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(npm run:*),Bash(npm test:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments:*)"
+          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(npm run:*),Bash(npm test:*),Bash(cargo build:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(make:*),Bash(just:*),Bash(pytest:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh api repos/${{ github.repository }}/pulls/*/comments:*)"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
@@ -143,13 +150,27 @@ jobs:
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
+      - name: Report when the agent pushed nothing
+        # The CLI exits 0 even when the agent gives up, so a green run does not mean the feedback was
+        # handled. If the branch did not move, put the agent's reply on the PR so the outcome is visible.
+        if: inputs.pr_state == 'open' && inputs.agent_provider == 'claude' && success()
+        env:
+          RESULT_FILE: ${{ steps.agent.outputs.result_file }}
+        run: |
+          remote=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
+          if [ "$remote" = "$BRANCH_HEAD_SHA" ]; then
+            echo "::notice::The agent pushed nothing. Posting its reply on the PR."
+            { echo "The agent did not push a change. Its reply:"; echo; cat "$RESULT_FILE"; } > "${RUNNER_TEMP}/no-push.md"
+            gh pr comment "$PR_NUMBER" --body-file "${RUNNER_TEMP}/no-push.md"
+          fi
+
       - name: Mark blocked on failure
         if: inputs.pr_state == 'open' && failure()
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh pr edit "$PR_NUMBER" --add-label "agent:blocked" || true
-          gh pr comment "$PR_NUMBER" --body "\`agent:implement\` PR run failed. Check the [workflow run]($RUN_URL). Re-add \`agent:implement\` to retry."
+          gh pr comment "$PR_NUMBER" --body "\`agent:implement-pr\` run failed. Check the [workflow run]($RUN_URL). Re-add \`agent:implement-pr\` to retry."
 
       - name: Always remove in-progress
         if: always() && inputs.pr_state == 'open'

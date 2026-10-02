@@ -68,6 +68,10 @@ jobs:
           git config --global user.name "protocortex[bot]"
           git config --global user.email "${bot_id:+${bot_id}+}protocortex[bot]@users.noreply.github.com"
 
+      - name: Switch to the PR branch
+        # The checkout is detached at the PR head, so the agent has no branch to push. Name it.
+        run: git switch -C "$BRANCH"
+
       - name: Detect Node project
         id: node
         # The stubs default to npm commands. A repo without a package.json (Rust, Python, ...) has
@@ -98,7 +102,8 @@ jobs:
           merge `origin/${{ inputs.base_ref }}` into the current branch (merge, not rebase, since
           this branch may already be pushed and reviewed). Resolve any conflicts using the
           intent of both sides, run this repo's build (`${{ inputs.build_command }}`) and test
-          command afterward, then commit and push.
+          command afterward, then commit and push. You are on the branch `${{ inputs.branch }}`,
+          push it with `git push origin ${{ inputs.branch }}`.
 
           If a conflict is ambiguous (both sides changed the same logic meaningfully), stop and
           post a PR comment explaining the conflict instead of guessing which side should win.
@@ -106,6 +111,7 @@ jobs:
           PROMPT_BLOCK
 
       - name: Update branch agent (Claude)
+        id: agent
         if: inputs.agent_provider == 'claude'
         uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1
         with:
@@ -115,7 +121,7 @@ jobs:
           model: ${{ inputs.model }}
           effort: ${{ inputs.effort }}
           max_turns: "25"
-          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git fetch:*),Bash(git merge:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(npm run:*),Bash(npm test:*),Bash(gh pr comment:*)"
+          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(git merge:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(npm run:*),Bash(npm test:*),Bash(cargo build:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(make:*),Bash(just:*),Bash(pytest:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh pr comment:*)"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
@@ -128,6 +134,21 @@ jobs:
           max_turns: "25"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
+
+      - name: Check the branch is up to date
+        # The CLI exits 0 even when the agent gives up (a denied command, an ambiguous conflict), so
+        # check the result: the pushed branch must contain the base branch.
+        if: inputs.agent_provider == 'claude' && success()
+        env:
+          RESULT_FILE: ${{ steps.agent.outputs.result_file }}
+          BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          git fetch origin "$BASE_REF" "$BRANCH"
+          if ! git merge-base --is-ancestor "origin/$BASE_REF" "origin/$BRANCH"; then
+            echo "::error::origin/$BRANCH does not contain origin/$BASE_REF after the agent ran. Its reply was:"
+            cat "$RESULT_FILE"
+            exit 1
+          fi
 
       - name: Mark blocked on failure
         if: failure()
