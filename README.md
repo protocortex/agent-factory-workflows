@@ -50,27 +50,48 @@ when this repo's own code changes.
   `OPENAI_API_KEY`. Without the credential a given stage's `agent_provider` needs,
   that stage fails loudly at a dedicated validation step, before spending anything.
 
-## Who posts the comment
+## Who posts, commits and opens PRs
 
-A workflow's own token posts as `github-actions[bot]`. To comment as the Protocortex
-App instead, the triage stage has the agent write its comment as its final reply, then a
-separate step posts it to the Worker's `/comment` endpoint with this run's
-GitHub OIDC token (the default is the Worker's `workers.dev` address, because Cloudflare Bot
-Fight Mode on the custom domain challenges GitHub runners). The Worker checks the token, checks the call comes from one of these
-workflows and that the App is installed on the repo, and posts as `protocortex[bot]`.
-The agent never holds a write token. If the endpoint can't be reached, the step posts with
-the workflow token instead, so a result is never lost. To self-host, set `comment_endpoint` to your Worker and `comment_audience` to its
-`OIDC_AUDIENCE`. This needs the calling job to grant `id-token: write`, which the
-generated stubs already do.
+A workflow's own token acts as `github-actions[bot]`. To act as the Protocortex App instead, the
+stages send their output to the Worker, which checks this run's GitHub OIDC token (signature,
+audience, that the call comes from one of these workflows, that the App is installed on the
+repo) and acts with an installation token. The agent never holds a write token. Every Worker
+call falls back to the workflow token if the Worker can't take it, so a result is never lost.
+The jobs need `id-token: write`, which the generated stubs already grant.
 
-## Who opens the pull request
+| Stage | Endpoint | What the agent does | What the workflow does |
+| --- | --- | --- | --- |
+| triage | `/comment` | Ends with the comment as its final reply. | Posts it as `protocortex[bot]`. |
+| implement | `/commit`, `/pull-request`, `/review` | Edits files, ends with `COMMIT: <subject>`, then the PR description. | Commits as the App (GitHub signs it, so it is Verified), opens a draft PR as the App, then runs review. |
+| implement-pr | `/commit`, `/comment` | Edits files, ends with `COMMIT: <subject>` and a summary. | Commits, then posts the summary on the PR. |
+| review | `/review` | Ends with one JSON object: `verdict`, `summary`, `comments`. | Posts the review and inline comments as `protocortex[bot]`. |
+| update-branch | none | Merges the base branch and pushes. | Checks the pushed branch contains the base. |
 
-The implement stage works the same way for pull requests. The agent pushes its branch and
-ends with the PR description as its final reply. A separate step then sends the title,
-description and branch to the Worker's `/pull-request` endpoint with this run's GitHub OIDC
-token, and the Worker opens a draft PR as `protocortex[bot]`. If the endpoint can't be
-reached, the step opens the PR with the workflow token instead. Set `pr_endpoint` and
-`comment_audience` to point at your own Worker. The Codex path still opens its own PR.
+The Codex backend goes through the same steps: its final message is saved to the same
+`result_file` output the Claude backend has.
+
+Details that are easy to miss:
+
+- **`/commit` only takes `agent/` branches.** It creates the branch from the default branch,
+  refuses `.github/workflows/` paths, and takes up to 100 files and about 5 MB. A new executable
+  file, a symlink, or a bigger change is committed and pushed from the runner instead. So is any
+  branch that does not start with `agent/` (a PR branch a person opened), and a run where the
+  Worker answers anything but 201 (after one retry on 409).
+- **update-branch keeps `git push`.** A merge commit has two parents, and `/commit` makes a
+  single-parent commit, so the pushed branch would not contain the base branch.
+- **The review verdict.** The Worker refuses `APPROVE` by default, because an approval from the
+  App can satisfy a required review. An `approve` verdict is posted as a review comment that
+  starts with "Verdict: approve.". `request-changes` becomes a real change request. If GitHub
+  refuses an inline comment (a line outside the diff), the review is posted again with those
+  comments folded into the text.
+- **Review runs after implement.** The implement workflow calls the review workflow itself
+  once the PR is open. A label added with the workflow token never starts another workflow, which
+  is why this used to need a personal access token. Set `auto_review: false` to turn it off.
+- **`AGENT_PAT` is no longer used.** Stubs may still pass it and it is accepted and ignored.
+  CI runs on the PR, and on later pushes by the workflow, without it.
+- **Self-hosting.** Set `comment_endpoint`, `pr_endpoint`, `commit_endpoint`, `review_endpoint`
+  and `comment_audience` to point at your own Worker. The defaults use the Worker's `workers.dev`
+  address, because Cloudflare Bot Fight Mode on the custom domain challenges GitHub runners.
 
 ## Edge cases for a repo that calls these workflows
 
@@ -85,9 +106,9 @@ reached, the step opens the PR with the workflow token instead. Set `pr_endpoint
   organization or enterprise, so a caller in another org would silently pass
   nothing. Each secret a stub passes has to be declared under `on.workflow_call.secrets`
   here, passing an undeclared one is an error.
-- **The implement stage opens PRs.** That needs Settings, Actions, General, "Allow
-  GitHub Actions to create and approve pull requests", or an `AGENT_PAT` secret.
-  Without either, the run fails when it tries to open the PR.
+- **The implement stage opens PRs.** The Worker opens them as the App. If the Worker can't be
+  reached the fallback opens the PR with the workflow token, which needs Settings, Actions,
+  General, "Allow GitHub Actions to create and approve pull requests".
 - **Restricted Actions policy.** If the org only allows selected actions, allow
   `protocortex/agent-workflows/*` and the standard actions the workflows use, or the
   stubs won't start.
@@ -131,4 +152,5 @@ The version logic lives in `.github/scripts/next-version.sh`, with tests in
 `.github/workflows/ci.yml` runs `actionlint` on the workflow files and a
 dedicated `self-lint` job that shellchecks the `run:` blocks inside
 `.github/actions/*/action.yml` (actionlint itself never reaches into a
-composite action's own script bodies).
+composite action's own script bodies). The commit payload builder
+(`.github/actions/commit-via-worker/build-payload.sh`) has its own tests, run by CI.

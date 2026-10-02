@@ -19,10 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Shellcheck release scripts
-        run: shellcheck .github/scripts/*.sh
+      - name: Shellcheck release and commit scripts
+        run: shellcheck .github/scripts/*.sh .github/actions/commit-via-worker/*.sh
       - name: Test the version script
         run: bash .github/scripts/next-version.test.sh
+      - name: Test the commit payload builder
+        run: bash .github/actions/commit-via-worker/build-payload.test.sh
 
   self-lint:
     # actionlint only understands workflow files, not composite action.yml

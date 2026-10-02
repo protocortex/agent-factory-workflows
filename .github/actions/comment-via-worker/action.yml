@@ -1,0 +1,57 @@
+name: "Comment through the Protocortex Worker"
+description: >
+  Posts an issue or pull request comment as the Protocortex App through the Worker's /comment
+  endpoint. If the Worker cannot take it, posts with the workflow token (GH_TOKEN from the job), so
+  the comment is never lost.
+
+inputs:
+  number:
+    description: "Issue or pull request number."
+    required: true
+  body_file:
+    description: "Path of a file holding the comment body."
+    required: true
+  endpoint:
+    description: "Full URL of the Worker's /comment endpoint."
+    required: false
+    default: "https://agent-factory-app.main-account-786.workers.dev/comment"
+  audience:
+    description: "OIDC audience the Worker expects."
+    required: false
+    default: "https://factory.protocortex.ai"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build the request
+      id: build
+      shell: bash
+      env:
+        NUMBER: ${{ inputs.number }}
+        BODY_FILE: ${{ inputs.body_file }}
+      run: |
+        payload="${RUNNER_TEMP}/comment-payload-${NUMBER}.json"
+        jq -n --argjson number "$NUMBER" --rawfile body "$BODY_FILE" \
+          '{issue_number: $number, body: $body}' > "$payload"
+        echo "payload=${payload}" >> "$GITHUB_OUTPUT"
+
+    - name: Send it to the Worker
+      id: worker
+      uses: protocortex/agent-workflows/.github/actions/worker-call@v1
+      with:
+        endpoint: ${{ inputs.endpoint }}
+        audience: ${{ inputs.audience }}
+        payload_file: ${{ steps.build.outputs.payload }}
+
+    - name: Comment with the workflow token instead
+      if: steps.worker.outputs.code != '201'
+      shell: bash
+      env:
+        NUMBER: ${{ inputs.number }}
+        BODY_FILE: ${{ inputs.body_file }}
+        WORKER_CODE: ${{ steps.worker.outputs.code }}
+        WORKER_RESPONSE: ${{ steps.worker.outputs.response_file }}
+      run: |
+        echo "::warning::The comment endpoint answered ${WORKER_CODE}. Posting with the workflow token."
+        cat "$WORKER_RESPONSE" 2>/dev/null || true
+        gh issue comment "$NUMBER" --body-file "$BODY_FILE"

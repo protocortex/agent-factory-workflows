@@ -1,0 +1,113 @@
+name: "Open a pull request through the Protocortex Worker"
+description: >
+  Opens a pull request as the Protocortex App through the Worker's /pull-request endpoint. If the
+  Worker cannot take it, opens it with the workflow token (GH_TOKEN from the job). An open PR for the
+  same head is left alone.
+
+inputs:
+  head:
+    description: "Head branch."
+    required: true
+  base:
+    description: "Base branch."
+    required: true
+  title:
+    description: "Pull request title."
+    required: true
+  body_file:
+    description: "Path of a file holding the pull request body."
+    required: true
+  draft:
+    description: "Open as a draft."
+    required: false
+    default: "true"
+  endpoint:
+    description: "Full URL of the Worker's /pull-request endpoint."
+    required: false
+    default: "https://agent-factory-app.main-account-786.workers.dev/pull-request"
+  audience:
+    description: "OIDC audience the Worker expects."
+    required: false
+    default: "https://factory.protocortex.ai"
+
+outputs:
+  number:
+    description: "Number of the open pull request for the head branch."
+    value: ${{ steps.finish.outputs.number }}
+  head_sha:
+    description: "Head commit of that pull request."
+    value: ${{ steps.finish.outputs.head_sha }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Look for an open PR
+      id: existing
+      shell: bash
+      env:
+        HEAD_BRANCH: ${{ inputs.head }}
+      run: |
+        number=$(gh pr list --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+        echo "number=${number}" >> "$GITHUB_OUTPUT"
+        if [ -n "$number" ]; then
+          echo "A PR for $HEAD_BRANCH is already open (#${number}); leaving it alone."
+        fi
+
+    - name: Build the request
+      id: build
+      if: steps.existing.outputs.number == ''
+      shell: bash
+      env:
+        HEAD_BRANCH: ${{ inputs.head }}
+        BASE_BRANCH: ${{ inputs.base }}
+        TITLE: ${{ inputs.title }}
+        BODY_FILE: ${{ inputs.body_file }}
+        DRAFT: ${{ inputs.draft }}
+      run: |
+        payload="${RUNNER_TEMP}/pr-payload.json"
+        jq -n --arg head "$HEAD_BRANCH" --arg base "$BASE_BRANCH" --arg title "$TITLE" \
+          --rawfile body "$BODY_FILE" --argjson draft "$DRAFT" \
+          '{head: $head, base: $base, title: $title, body: $body, draft: $draft}' > "$payload"
+        echo "payload=${payload}" >> "$GITHUB_OUTPUT"
+
+    - name: Send it to the Worker
+      id: worker
+      if: steps.existing.outputs.number == ''
+      uses: protocortex/agent-workflows/.github/actions/worker-call@v1
+      with:
+        endpoint: ${{ inputs.endpoint }}
+        audience: ${{ inputs.audience }}
+        payload_file: ${{ steps.build.outputs.payload }}
+
+    - name: Open it with the workflow token instead
+      if: steps.existing.outputs.number == '' && steps.worker.outputs.code != '201' && steps.worker.outputs.code != '200'
+      shell: bash
+      env:
+        HEAD_BRANCH: ${{ inputs.head }}
+        BASE_BRANCH: ${{ inputs.base }}
+        TITLE: ${{ inputs.title }}
+        BODY_FILE: ${{ inputs.body_file }}
+        DRAFT: ${{ inputs.draft }}
+        WORKER_CODE: ${{ steps.worker.outputs.code }}
+        WORKER_RESPONSE: ${{ steps.worker.outputs.response_file }}
+      run: |
+        echo "::warning::The pull request endpoint answered ${WORKER_CODE}. Opening the PR with the workflow token."
+        cat "$WORKER_RESPONSE" 2>/dev/null || true
+        draft_flag=""
+        if [ "$DRAFT" = "true" ]; then draft_flag="--draft"; fi
+        # shellcheck disable=SC2086 # draft_flag is empty or a single flag
+        gh pr create $draft_flag --base "$BASE_BRANCH" --head "$HEAD_BRANCH" --title "$TITLE" --body-file "$BODY_FILE"
+
+    - name: Report the PR
+      id: finish
+      shell: bash
+      env:
+        HEAD_BRANCH: ${{ inputs.head }}
+      run: |
+        info=$(gh pr list --head "$HEAD_BRANCH" --state open --json number,headRefOid --jq '.[0] // empty')
+        if [ -z "$info" ]; then
+          echo "::error::No open PR for $HEAD_BRANCH after trying to open one."
+          exit 1
+        fi
+        echo "number=$(jq -r .number <<< "$info")" >> "$GITHUB_OUTPUT"
+        echo "head_sha=$(jq -r .headRefOid <<< "$info")" >> "$GITHUB_OUTPUT"
