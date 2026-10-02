@@ -56,9 +56,13 @@ when this repo's own code changes.
   files existed, or before they reached the default branch, never fires. Workflows
   run from the default branch, so merge the stub files first, then remove the label
   and add it again.
-- **Credentials can come from the org.** The stubs pass `secrets: inherit`, so an
+- **Credentials can come from the org.** The stubs pass each secret by name, so an
   organization secret (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or
-  `OPENAI_API_KEY`) works for every repo it's shared with.
+  `OPENAI_API_KEY`) works for every repo it's shared with. They don't use
+  `secrets: inherit`: GitHub only honors it for reusable workflows in the same
+  organization or enterprise, so a caller in another org would silently pass
+  nothing. Each secret a stub passes has to be declared under `on.workflow_call.secrets`
+  here, passing an undeclared one is an error.
 - **The implement stage opens PRs.** That needs Settings, Actions, General, "Allow
   GitHub Actions to create and approve pull requests", or an `AGENT_PAT` secret.
   Without either, the run fails when it tries to open the PR.
