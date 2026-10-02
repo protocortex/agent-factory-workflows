@@ -15,6 +15,9 @@ on:
       timeout_minutes: { required: false, type: number, default: 60 }
       extra_allowed_domains: { required: false, type: string, default: "" }
       agent_provider: { required: false, type: string, default: "claude" }
+      commit_endpoint: { required: false, type: string, default: "https://agent-factory-app.main-account-786.workers.dev/commit" }
+      comment_endpoint: { required: false, type: string, default: "https://agent-factory-app.main-account-786.workers.dev/comment" }
+      comment_audience: { required: false, type: string, default: "https://factory.protocortex.ai" }
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: { required: false }
       ANTHROPIC_API_KEY: { required: false }
@@ -113,8 +116,13 @@ jobs:
           `gh api repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}/comments`). Address every
           unresolved comment: make the code change, or reply explaining why you didn't (e.g. it's
           out of scope or you disagree, with reasoning). Commit and push your changes to the
-          existing branch, do not open a new PR or force-push over unrelated history. You are on
-          the branch `${{ inputs.branch }}`, push it with `git push origin ${{ inputs.branch }}`.
+          existing branch, do not open a new PR or force-push over unrelated history.
+
+          Leave your code changes in the working tree. Do not commit or push: the workflow commits
+          them to `${{ inputs.branch }}`. If you changed code, your final reply starts with the line
+          `COMMIT: ` and a conventional commit subject (for example `COMMIT: fix: handle empty input`),
+          then a blank line, then a short summary of what you changed and anything you did not
+          address. If you changed nothing, reply with an explanation and no `COMMIT:` line.
 
           Run this repo's build (`${{ inputs.build_command }}`) and test command before pushing.
 
@@ -136,11 +144,12 @@ jobs:
           model: ${{ inputs.model }}
           effort: ${{ inputs.effort }}
           max_turns: "30"
-          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(npm run:*),Bash(npm test:*),Bash(cargo build:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(make:*),Bash(just:*),Bash(pytest:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh api repos/${{ github.repository }}/pulls/*/comments:*)"
+          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*),Bash(npm run:*),Bash(npm test:*),Bash(cargo build:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(make:*),Bash(just:*),Bash(pytest:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh api repos/${{ github.repository }}/pulls/*/comments:*)"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
       - name: Address review feedback (Codex)
+        id: codex
         if: inputs.pr_state == 'open' && inputs.agent_provider == 'codex'
         uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1
         with:
@@ -150,19 +159,45 @@ jobs:
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
-      - name: Report when the agent pushed nothing
-        # The CLI exits 0 even when the agent gives up, so a green run does not mean the feedback was
-        # handled. If the branch did not move, put the agent's reply on the PR so the outcome is visible.
-        if: inputs.pr_state == 'open' && inputs.agent_provider == 'claude' && success()
+      - name: Read the agent's reply
+        if: inputs.pr_state == 'open'
+        id: reply
         env:
-          RESULT_FILE: ${{ steps.agent.outputs.result_file }}
+          RESULT_FILE: ${{ steps.agent.outputs.result_file || steps.codex.outputs.result_file }}
         run: |
-          remote=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
-          if [ "$remote" = "$BRANCH_HEAD_SHA" ]; then
-            echo "::notice::The agent pushed nothing. Posting its reply on the PR."
-            { echo "The agent did not push a change. Its reply:"; echo; cat "$RESULT_FILE"; } > "${RUNNER_TEMP}/no-push.md"
-            gh pr comment "$PR_NUMBER" --body-file "${RUNNER_TEMP}/no-push.md"
+          set -euo pipefail
+          subject=$(grep -m1 -E '^COMMIT: .+' "$RESULT_FILE" | sed -E 's/^COMMIT: //' || true)
+          summary="${RUNNER_TEMP}/agent-summary.md"
+          grep -vE '^COMMIT: ' "$RESULT_FILE" > "$summary" || true
+          if ! grep -q '[^[:space:]]' "$summary"; then
+            echo "The agent finished without a summary." > "$summary"
           fi
+          { echo "subject<<COMMIT_EOF"; echo "$subject"; echo "COMMIT_EOF"; } >> "$GITHUB_OUTPUT"
+          echo "summary=${summary}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the changes as Protocortex
+        # Branches the agent opened (agent/...) are committed through the Worker, so GitHub signs
+        # the commit as the App. Any other branch is pushed from the runner.
+        if: inputs.pr_state == 'open' && steps.reply.outputs.subject != ''
+        id: commit
+        uses: protocortex/agent-workflows/.github/actions/commit-via-worker@v1
+        with:
+          branch: ${{ inputs.branch }}
+          message: ${{ steps.reply.outputs.subject }}
+          base_sha: ${{ inputs.branch_head_sha }}
+          audience: ${{ inputs.comment_audience }}
+          endpoint: ${{ inputs.commit_endpoint }}
+
+      - name: Report the result on the PR
+        # The CLI exits 0 even when the agent gives up, so the agent's own summary goes on the PR
+        # either way. Nothing committed means the reply says why.
+        if: inputs.pr_state == 'open'
+        uses: protocortex/agent-workflows/.github/actions/comment-via-worker@v1
+        with:
+          number: ${{ inputs.pr_number }}
+          body_file: ${{ steps.reply.outputs.summary }}
+          audience: ${{ inputs.comment_audience }}
+          endpoint: ${{ inputs.comment_endpoint }}
 
       - name: Mark blocked on failure
         if: inputs.pr_state == 'open' && failure()

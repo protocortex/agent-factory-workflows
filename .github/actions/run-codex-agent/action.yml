@@ -38,6 +38,9 @@ outputs:
   conclusion:
     description: "'success' or 'failure', from the underlying step's own conclusion."
     value: ${{ steps.run.conclusion }}
+  result_file:
+    description: "Path of a file holding Codex's final message, the same shape as run-claude-agent's."
+    value: ${{ steps.result.outputs.result_file }}
 
 runs:
   using: "composite"
@@ -110,3 +113,13 @@ runs:
         # ever changes to "latest".
         codex-version: "0.153.4"
         safety-strategy: "drop-sudo"
+
+    - name: Save the final message
+      id: result
+      shell: bash
+      env:
+        FINAL_MESSAGE: ${{ steps.run.outputs.final-message }}
+      run: |
+        result_file="${RUNNER_TEMP}/codex-result.md"
+        printf '%s' "$FINAL_MESSAGE" > "$result_file"
+        echo "result_file=${result_file}" >> "$GITHUB_OUTPUT"

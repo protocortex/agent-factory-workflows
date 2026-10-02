@@ -1,0 +1,72 @@
+name: "Call the Protocortex Worker"
+description: >
+  POSTs a JSON file to one of the Protocortex Worker's endpoints with this run's GitHub OIDC token.
+  It never fails the job: the caller reads `code` and decides on a fallback. `code` is the HTTP
+  status, or `none` when there was no OIDC token or the request did not complete.
+
+inputs:
+  endpoint:
+    description: "Full URL of the Worker endpoint, for example https://.../commit."
+    required: true
+  audience:
+    description: "OIDC audience the Worker expects."
+    required: true
+  payload_file:
+    description: "Path of the JSON request body."
+    required: true
+  retry_on_conflict:
+    description: "Retry once after a 409, for endpoints where the target moved while writing."
+    required: false
+    default: "false"
+
+outputs:
+  code:
+    description: "HTTP status code of the last attempt, or 'none'."
+    value: ${{ steps.call.outputs.code }}
+  response_file:
+    description: "Path of the response body."
+    value: ${{ steps.call.outputs.response_file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Call the endpoint
+      id: call
+      shell: bash
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        AUDIENCE: ${{ inputs.audience }}
+        PAYLOAD_FILE: ${{ inputs.payload_file }}
+        RETRY_ON_CONFLICT: ${{ inputs.retry_on_conflict }}
+      run: |
+        response=$(mktemp "${RUNNER_TEMP}/worker-response-XXXXXX")
+        echo "response_file=${response}" >> "$GITHUB_OUTPUT"
+
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "::warning::This job has no id-token permission, so it cannot call the Worker."
+          echo "code=none" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        oidc=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -r '.value // empty') || oidc=""
+        if [ -z "$oidc" ]; then
+          echo "::warning::Could not get an OIDC token."
+          echo "code=none" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "::add-mask::${oidc}"
+
+        code="none"
+        for attempt in 1 2; do
+          code=$(curl -sS -o "$response" -w '%{http_code}' -X POST "$ENDPOINT" \
+            -H "Authorization: Bearer ${oidc}" -H 'Content-Type: application/json' \
+            --data-binary "@${PAYLOAD_FILE}") || code="none"
+          if [ "$code" = "409" ] && [ "$RETRY_ON_CONFLICT" = "true" ] && [ "$attempt" = "1" ]; then
+            echo "::notice::The Worker answered 409, retrying once."
+            sleep 2
+            continue
+          fi
+          break
+        done
+        echo "code=${code}" >> "$GITHUB_OUTPUT"

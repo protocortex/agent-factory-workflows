@@ -1,0 +1,118 @@
+name: "Commit the agent's changes through the Protocortex Worker"
+description: >
+  Sends the working tree changes (against base_sha) to the Worker's /commit endpoint, so GitHub signs
+  the commit as the App. If the Worker cannot take it, commits and pushes from the runner instead.
+  The agent edits files and never commits or pushes.
+
+inputs:
+  branch:
+    description: "Branch to commit to. The Worker only accepts names starting with agent/."
+    required: true
+  message:
+    description: "Commit message."
+    required: true
+  base_sha:
+    description: "Commit the working tree started from. Changes are computed against it."
+    required: true
+  endpoint:
+    description: "Full URL of the Worker's /commit endpoint."
+    required: false
+    default: "https://agent-factory-app.main-account-786.workers.dev/commit"
+  audience:
+    description: "OIDC audience the Worker expects."
+    required: false
+    default: "https://factory.protocortex.ai"
+  push_fallback:
+    description: "Commit and push from the runner when the Worker route is not possible."
+    required: false
+    default: "true"
+
+outputs:
+  outcome:
+    description: "worker, pushed, or nothing."
+    value: ${{ steps.finish.outputs.outcome }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build the commit
+      id: build
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        MESSAGE: ${{ inputs.message }}
+        BASE_SHA: ${{ inputs.base_sha }}
+      run: |
+        payload="${RUNNER_TEMP}/commit-payload.json"
+        echo "payload=${payload}" >> "$GITHUB_OUTPUT"
+        case "$BRANCH" in
+          agent/*) ;;
+          *)
+            echo "::notice::The Worker only commits to agent/ branches, so $BRANCH is pushed from the runner."
+            echo "route=push" >> "$GITHUB_OUTPUT"
+            exit 0
+            ;;
+        esac
+        status=0
+        OUT="$payload" bash "${{ github.action_path }}/build-payload.sh" || status=$?
+        case "$status" in
+          0) echo "route=worker" >> "$GITHUB_OUTPUT" ;;
+          10) echo "route=nothing" >> "$GITHUB_OUTPUT" ;;
+          11) echo "route=push" >> "$GITHUB_OUTPUT" ;;
+          *) exit "$status" ;;
+        esac
+
+    - name: Send it to the Worker
+      id: worker
+      if: steps.build.outputs.route == 'worker'
+      uses: protocortex/agent-workflows/.github/actions/worker-call@v1
+      with:
+        endpoint: ${{ inputs.endpoint }}
+        audience: ${{ inputs.audience }}
+        payload_file: ${{ steps.build.outputs.payload }}
+        retry_on_conflict: "true"
+
+    - name: Commit and push from the runner
+      id: push
+      if: steps.build.outputs.route == 'push' || (steps.build.outputs.route == 'worker' && steps.worker.outputs.code != '201')
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        MESSAGE: ${{ inputs.message }}
+        PUSH_FALLBACK: ${{ inputs.push_fallback }}
+        BASE_SHA: ${{ inputs.base_sha }}
+        WORKER_CODE: ${{ steps.worker.outputs.code }}
+        WORKER_RESPONSE: ${{ steps.worker.outputs.response_file }}
+      run: |
+        if [ -n "${WORKER_CODE:-}" ]; then
+          echo "::warning::The commit endpoint answered ${WORKER_CODE}. Committing from the runner instead."
+          cat "$WORKER_RESPONSE" 2>/dev/null || true
+        fi
+        if [ "$PUSH_FALLBACK" != "true" ]; then
+          echo "::error::The Worker did not take the commit and push_fallback is off."
+          exit 1
+        fi
+        git add -A
+        if git diff --cached --quiet "$BASE_SHA"; then
+          echo "pushed=nothing" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        git switch -C "$BRANCH"
+        git commit -q -m "$MESSAGE"
+        git push origin "$BRANCH"
+        echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+    - name: Report the outcome
+      id: finish
+      shell: bash
+      env:
+        ROUTE: ${{ steps.build.outputs.route }}
+        PUSHED: ${{ steps.push.outputs.pushed }}
+      run: |
+        if [ "$ROUTE" = "nothing" ] || [ "$PUSHED" = "nothing" ]; then
+          echo "outcome=nothing" >> "$GITHUB_OUTPUT"
+        elif [ "$PUSHED" = "true" ]; then
+          echo "outcome=pushed" >> "$GITHUB_OUTPUT"
+        else
+          echo "outcome=worker" >> "$GITHUB_OUTPUT"
+        fi
