@@ -1,0 +1,86 @@
+name: Release
+
+# Tags and releases only. This workflow never pushes a commit, so it cannot trigger itself.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rollback_to:
+        description: "Move the floating major tag back to this release (for example v1.6.1). Leave empty to run a normal release."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Roll the floating tag back
+        if: inputs.rollback_to != ''
+        env:
+          ROLLBACK_TO: ${{ inputs.rollback_to }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$ROLLBACK_TO" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::rollback_to must look like v1.2.3, got: $ROLLBACK_TO"
+            exit 1
+          fi
+          sha=$(git rev-parse --verify --quiet "refs/tags/${ROLLBACK_TO}^{commit}") || {
+            echo "::error::Tag $ROLLBACK_TO does not exist"
+            exit 1
+          }
+          major=${ROLLBACK_TO%%.*}
+          gh api -X PATCH "repos/${REPO}/git/refs/tags/${major}" -f sha="$sha" -F force=true >/dev/null
+          echo "Moved ${major} to ${ROLLBACK_TO} (${sha})"
+
+      - name: Work out the next version
+        if: inputs.rollback_to == ''
+        id: next
+        run: bash .github/scripts/next-version.sh | tee -a "$GITHUB_OUTPUT"
+
+      - name: Tag and release
+        if: inputs.rollback_to == '' && steps.next.outputs.release == 'true'
+        env:
+          VERSION: v${{ steps.next.outputs.version }}
+          MAJOR: v${{ steps.next.outputs.major }}
+          BUMP: ${{ steps.next.outputs.bump }}
+          PREVIOUS: ${{ steps.next.outputs.previous }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${VERSION}" -f sha="$SHA" >/dev/null
+          gh release create "$VERSION" --verify-tag --title "$VERSION" --generate-notes --notes-start-tag "$PREVIOUS"
+
+          # A major bump gets its own floating tag and leaves the old one alone: repos only follow
+          # a new major when the owner changes the Worker's FACTORY_REF.
+          if gh api -X PATCH "repos/${REPO}/git/refs/tags/${MAJOR}" -f sha="$SHA" -F force=true >/dev/null 2>&1; then
+            echo "Moved ${MAJOR} to ${VERSION}"
+          else
+            gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${MAJOR}" -f sha="$SHA" >/dev/null
+            echo "Created ${MAJOR} at ${VERSION}"
+          fi
+
+          if [ "$BUMP" = "major" ]; then
+            title="Bump FACTORY_REF to ${MAJOR}"
+            existing=$(gh issue list --repo "$REPO" --state open --search "\"${title}\" in:title" --json number --jq 'length')
+            if [ "$existing" = "0" ]; then
+              body="Release ${VERSION} is a breaking change, so it is published under the new floating tag \`${MAJOR}\`. Installed repos still follow the previous major and are unaffected."
+              body="${body}"$'\n\n'"To roll it out, set the Worker's \`FACTORY_REF\` to \`${MAJOR}\` and reprovision the installed repos so their stubs point at it. Check the release notes for what changed first."
+              gh issue create --repo "$REPO" --title "$title" --body "$body"
+            fi
+          fi

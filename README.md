@@ -98,15 +98,33 @@ reached, the step opens the PR with the workflow token instead. Set `pr_endpoint
 
 ## Releasing
 
-Callers and the workflows' own inner actions point at the floating major tag `v1`, so a
-release reaches every installed repo without a pin-bump PR. Keep inner refs on `@v1`.
+Releases are automatic. Callers and the workflows' own inner actions point at the floating
+major tag `v1`, so a release reaches every installed repo without a pin-bump PR. Keep inner
+refs on `@v1`.
 
-1. Merge to `main` once CI is green.
-2. Tag the release: `git tag -s vX.Y.Z <sha> && git push origin vX.Y.Z`.
-3. Move the major tag: `git tag -fs v1 <sha> && git push -f origin v1`.
+On every push to `main`, `.github/workflows/release.yml` reads the conventional commits since
+the latest `vX.Y.Z` tag and decides the next version:
 
-To roll back, move `v1` back to the previous release commit the same way. For a breaking
-change, cut `v2` instead and set the Worker's `FACTORY_REF` to `v2`, then reprovision.
+| Commit | Version change |
+| --- | --- |
+| `fix:` or `perf:` | patch |
+| `feat:` | minor |
+| `!` after the type, or a `BREAKING CHANGE:` footer | major |
+| `chore:`, `docs:`, `ci:`, `test:`, `refactor:`, `style:`, `build:` | none |
+
+The highest change since the last tag wins. With nothing releasable the workflow does
+nothing. Otherwise it tags `vX.Y.Z`, creates a GitHub Release with generated notes, and moves
+the floating major tag (`v1`) to the same commit. A major change creates `v2` and leaves `v1`
+alone, then opens an issue "Bump FACTORY_REF to v2". Installed repos only move to a new major
+when the owner sets the Worker's `FACTORY_REF` to it and reprovisions.
+
+To roll back, run the Release workflow by hand (Actions, Release, Run workflow) with
+`rollback_to` set to a version such as `v1.6.1`. It moves the floating major tag back to
+that release. Tags made by the workflow are unsigned lightweight tags created by
+`github-actions[bot]`.
+
+The version logic lives in `.github/scripts/next-version.sh`, with tests in
+`.github/scripts/next-version.test.sh`, run by CI.
 
 ## Development
 

@@ -15,6 +15,15 @@ jobs:
       - name: actionlint
         run: ./actionlint -color
 
+  release-script-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck release scripts
+        run: shellcheck .github/scripts/*.sh
+      - name: Test the version script
+        run: bash .github/scripts/next-version.test.sh
+
   self-lint:
     # actionlint only understands workflow files, not composite action.yml
     # files, so it never shellchecks the run: blocks inside
