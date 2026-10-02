@@ -5,7 +5,7 @@ on:
     inputs:
       issue_number: { required: true, type: number }
       issue_title: { required: true, type: string }
-      model: { required: false, type: string, default: "claude-sonnet-5" }
+      model: { required: false, type: string, default: "claude-sonnet-5-5" }
       effort: { required: false, type: string, default: "medium" }
       timeout_minutes: { required: false, type: number, default: 60 }
       extra_allowed_domains: { required: false, type: string, default: "" }
@@ -89,7 +89,7 @@ jobs:
         # baseline this wraps. Update the owner/repo@ref below if you copied this file
         # somewhere other than protocortex/agent-workflows.
         if: inputs.agent_provider == 'claude'
-        uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1.4.0
+        uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1.4.1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -102,7 +102,7 @@ jobs:
 
       - name: Triage agent (Codex)
         if: inputs.agent_provider == 'codex'
-        uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1.4.0
+        uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1.4.1
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ inputs.model }}
