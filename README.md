@@ -96,6 +96,18 @@ reached, the step opens the PR with the workflow token instead. Set `pr_endpoint
 - **Pins.** Stubs pin this repo to a release tag. Tags don't move, and renaming a
   stage file ships as a new tag, so repos on older tags keep working.
 
+## Releasing
+
+Callers and the workflows' own inner actions point at the floating major tag `v1`, so a
+release reaches every installed repo without a pin-bump PR. Keep inner refs on `@v1`.
+
+1. Merge to `main` once CI is green.
+2. Tag the release: `git tag -s vX.Y.Z <sha> && git push origin vX.Y.Z`.
+3. Move the major tag: `git tag -fs v1 <sha> && git push -f origin v1`.
+
+To roll back, move `v1` back to the previous release commit the same way. For a breaking
+change, cut `v2` instead and set the Worker's `FACTORY_REF` to `v2`, then reprovision.
+
 ## Development
 
 `.github/workflows/ci.yml` runs `actionlint` on the workflow files and a
