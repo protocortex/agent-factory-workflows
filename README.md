@@ -14,7 +14,7 @@ at a given stage. The security baseline (sandbox, network allowlist,
 credential masking) lives in one place per backend, not five.
 
 Every `agent-*.yml` file references the composite actions as
-`protocortex/agent-workflows/.github/actions/<name>@v1.2.2`, since
+`protocortex/agent-workflows/.github/actions/<name>@<release tag>`, since
 GitHub Actions can't resolve a same-repo relative action path here (`./`):
 that step runs against the *onboarded* repo's checkout, not this one, so it
 has to be a real owner/repo reference. Bump the pin (and tag a new release)
@@ -49,6 +49,26 @@ when this repo's own code changes.
   (which does require that App for either credential type). `run-codex-agent` needs
   `OPENAI_API_KEY`. Without the credential a given stage's `agent_provider` needs,
   that stage fails loudly at a dedicated validation step, before spending anything.
+
+## Edge cases for a repo that calls these workflows
+
+- **Labels trigger on a fresh `labeled` event.** A label added before the workflow
+  files existed, or before they reached the default branch, never fires. Workflows
+  run from the default branch, so merge the stub files first, then remove the label
+  and add it again.
+- **Credentials can come from the org.** The stubs pass `secrets: inherit`, so an
+  organization secret (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or
+  `OPENAI_API_KEY`) works for every repo it's shared with.
+- **The implement stage opens PRs.** That needs Settings, Actions, General, "Allow
+  GitHub Actions to create and approve pull requests", or an `AGENT_PAT` secret.
+  Without either, the run fails when it tries to open the PR.
+- **Restricted Actions policy.** If the org only allows selected actions, allow
+  `protocortex/agent-workflows/*` and the standard actions the workflows use, or the
+  stubs won't start.
+- **A failed run.** `agent:blocked` means the last run failed. Add the stage label
+  again to retry.
+- **Pins.** Stubs pin this repo to a release tag. Tags don't move, and renaming a
+  stage file ships as a new tag, so repos on older tags keep working.
 
 ## Development
 
