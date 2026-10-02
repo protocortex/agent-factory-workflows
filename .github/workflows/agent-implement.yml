@@ -211,7 +211,7 @@ jobs:
           model: ${{ inputs.model }}
           effort: ${{ inputs.effort }}
           max_turns: "40"
-          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git push:*),Bash(npm install:*),Bash(npm run:*),Bash(npm test:*),Bash(gh issue view:*)"
+          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git push:*),Bash(npm install:*),Bash(npm run:*),Bash(npm test:*),Bash(cargo build:*),Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(make:*),Bash(just:*),Bash(pytest:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh issue view:*)"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
