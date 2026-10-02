@@ -24,11 +24,11 @@ inputs:
   endpoint:
     description: "Full URL of the Worker's /pull-request endpoint."
     required: false
-    default: "https://agent-factory-app.main-account-786.workers.dev/pull-request"
+    default: "https://protocortex-agent-worker.main-account-786.workers.dev/pull-request"
   audience:
     description: "OIDC audience the Worker expects."
     required: false
-    default: "https://factory.protocortex.ai"
+    default: "https://agent.protocortex.ai"
 
 outputs:
   number:

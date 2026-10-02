@@ -1,7 +1,7 @@
 name: "Run Codex Agent (hardened)"
 description: >
   Wraps openai/codex-action@v1 with a fixed sandbox baseline shared by every
-  agent-factory stage that runs on the Codex backend. Mirrors run-claude-agent's
+  Protocortex stage that runs on the Codex backend. Mirrors run-claude-agent's
   external shape so a caller can dispatch to either backend with the same
   input contract.
 

@@ -14,8 +14,8 @@ on:
       timeout_minutes: { required: false, type: number, default: 60 }
       extra_allowed_domains: { required: false, type: string, default: "" }
       agent_provider: { required: false, type: string, default: "claude" }
-      review_endpoint: { required: false, type: string, default: "https://agent-factory-app.main-account-786.workers.dev/review" }
-      comment_audience: { required: false, type: string, default: "https://factory.protocortex.ai" }
+      review_endpoint: { required: false, type: string, default: "https://protocortex-agent-worker.main-account-786.workers.dev/review" }
+      comment_audience: { required: false, type: string, default: "https://agent.protocortex.ai" }
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: { required: false }
       ANTHROPIC_API_KEY: { required: false }

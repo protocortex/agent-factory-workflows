@@ -1,6 +1,6 @@
 # agent-workflows
 
-Reusable GitHub Actions workflows for the agent-factory pipeline. Each stage
+Reusable GitHub Actions workflows for the Protocortex pipeline. Each stage
 workflow calls a local composite action (`run-claude-agent` or
 `run-codex-agent`), which runs that backend's CLI directly (installed via
 npm) with a fixed sandbox + credential-masking baseline. Neither backend

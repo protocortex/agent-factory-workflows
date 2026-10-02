@@ -2,7 +2,7 @@ name: "Run Claude Agent (hardened)"
 description: >
   Runs the Claude Code CLI directly (installed via npm, not
   anthropics/claude-code-action@v1) with a fixed sandbox + credential-masking
-  baseline shared by every agent-factory stage. Every stage's untrusted input
+  baseline shared by every Protocortex stage. Every stage's untrusted input
   (issue title/body, PR content) flows into `prompt`, so this exists to make
   the leakage defenses apply everywhere by construction, instead of being
   copy-pasted five times and drifting. Runs the CLI directly rather than the
