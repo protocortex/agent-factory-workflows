@@ -143,6 +143,13 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.AGENT_PAT || secrets.GITHUB_TOKEN }}
 
+      - name: Set git identity
+        # The runner has no git author, so the agent's commit fails. Commit as the App's bot user.
+        run: |
+          bot_id=$(gh api "users/protocortex%5Bbot%5D" --jq .id 2>/dev/null || echo "")
+          git config --global user.name "protocortex[bot]"
+          git config --global user.email "${bot_id:+${bot_id}+}protocortex[bot]@users.noreply.github.com"
+
       - name: Detect Node project
         id: node
         # The stubs default to npm commands. A repo without a package.json (Rust, Python, ...) has
