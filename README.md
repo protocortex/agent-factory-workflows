@@ -50,6 +50,18 @@ when this repo's own code changes.
   `OPENAI_API_KEY`. Without the credential a given stage's `agent_provider` needs,
   that stage fails loudly at a dedicated validation step, before spending anything.
 
+## Who posts the comment
+
+A workflow's own token posts as `github-actions[bot]`. To comment as the Protocortex
+App instead, the triage stage has the agent write its comment as its final reply, then a
+separate step posts it through `https://factory.protocortex.ai/comment` with this run's
+GitHub OIDC token. The Worker checks the token, checks the call comes from one of these
+workflows and that the App is installed on the repo, and posts as `protocortex[bot]`.
+The agent never holds a write token. If the endpoint can't be reached, the step posts with
+the workflow token instead, so a result is never lost. Point `comment_endpoint` at your own
+Worker to self-host. This needs the calling job to grant `id-token: write`, which the
+generated stubs already do.
+
 ## Edge cases for a repo that calls these workflows
 
 - **Labels trigger on a fresh `labeled` event.** A label added before the workflow

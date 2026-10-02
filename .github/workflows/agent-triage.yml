@@ -10,6 +10,7 @@ on:
       timeout_minutes: { required: false, type: number, default: 60 }
       extra_allowed_domains: { required: false, type: string, default: "" }
       agent_provider: { required: false, type: string, default: "claude" }
+      comment_endpoint: { required: false, type: string, default: "https://factory.protocortex.ai/comment" }
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: { required: false }
       ANTHROPIC_API_KEY: { required: false }
@@ -64,8 +65,8 @@ jobs:
           ISSUE TITLE: ${{ inputs.issue_title }}
 
           Read issue #${{ inputs.issue_number }} (`gh issue view`) and enough of the codebase to
-          scope it accurately. Do not modify any files. Post exactly one comment on the issue via
-          `gh issue comment` containing these headers, in this order:
+          scope it accurately. Do not modify any files. ${{ inputs.agent_provider == 'claude' && 'Your final reply is posted verbatim as the comment on the issue, so reply with only the comment text: start with the first header, add no preamble or closing remarks, and add no footer or attribution. Do not run gh issue comment.' || 'Post exactly one comment on the issue via `gh issue comment`.' }}
+          The comment must contain these headers, in this order:
 
           ## Problem restatement
           ## Proposed scope
@@ -85,11 +86,12 @@ jobs:
           PROMPT_BLOCK
 
       - name: Triage agent (Claude)
+        id: agent
         # See ../actions/run-claude-agent/action.yml for the sandbox + credential-masking
         # baseline this wraps. Update the owner/repo@ref below if you copied this file
         # somewhere other than protocortex/agent-workflows.
         if: inputs.agent_provider == 'claude'
-        uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1.4.3
+        uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1.5.0
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -97,13 +99,56 @@ jobs:
           model: ${{ inputs.model }}
           effort: ${{ inputs.effort }}
           max_turns: "15"
-          allowed_tools: "Read,Glob,Grep,Bash(git log:*),Bash(git blame:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh search issues:*)"
+          allowed_tools: "Read,Glob,Grep,Bash(git log:*),Bash(git blame:*),Bash(gh issue view:*),Bash(gh search issues:*)"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
+      - name: Post the comment as Protocortex
+        # The agent only writes the comment. This step posts it through the Protocortex Worker, which
+        # verifies this run's OIDC token and comments as the App, so the agent never holds a write
+        # token. If the Worker can't be reached the comment goes out with the workflow token instead,
+        # so a triage result is never lost.
+        if: inputs.agent_provider == 'claude'
+        env:
+          RESULT_FILE: ${{ steps.agent.outputs.result_file }}
+          COMMENT_ENDPOINT: ${{ inputs.comment_endpoint }}
+        run: |
+          set -euo pipefail
+          if ! grep -q '^## Problem restatement' "$RESULT_FILE"; then
+            echo "::error::The agent did not return a triage comment. Its reply was:"
+            cat "$RESULT_FILE"
+            exit 1
+          fi
+
+          post_with_workflow_token() {
+            echo "::warning::Posting with the workflow token instead: $1"
+            gh issue comment "$ISSUE_NUMBER" --body-file "$RESULT_FILE"
+          }
+
+          audience=$(printf '%s' "$COMMENT_ENDPOINT" | sed -E 's#^(https?://[^/]+).*#\1#')
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            post_with_workflow_token "this job has no id-token permission"
+            exit 0
+          fi
+          oidc=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}" | jq -r '.value // empty') || oidc=""
+          if [ -z "$oidc" ]; then
+            post_with_workflow_token "could not get an OIDC token"
+            exit 0
+          fi
+
+          payload=$(jq -n --argjson issue "$ISSUE_NUMBER" --rawfile body "$RESULT_FILE" '{issue_number: $issue, body: $body}')
+          response="${RUNNER_TEMP}/comment-response.json"
+          code=$(curl -sS -o "$response" -w '%{http_code}' -X POST "$COMMENT_ENDPOINT" \
+            -H "Authorization: Bearer ${oidc}" -H 'Content-Type: application/json' -d "$payload") || code="none"
+          if [ "$code" != "201" ]; then
+            cat "$response" 2>/dev/null || true
+            post_with_workflow_token "the comment endpoint answered ${code}"
+          fi
+
       - name: Triage agent (Codex)
         if: inputs.agent_provider == 'codex'
-        uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1.4.3
+        uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1.5.0
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ inputs.model }}
