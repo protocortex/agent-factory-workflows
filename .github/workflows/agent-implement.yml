@@ -143,14 +143,21 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.AGENT_PAT || secrets.GITHUB_TOKEN }}
 
+      - name: Detect Node project
+        id: node
+        # The stubs default to npm commands. A repo without a package.json (Rust, Python, ...) has
+        # nothing to install, so skip Node setup instead of failing on `npm ci`.
+        run: |
+          if [ -f package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; echo "::notice::No package.json, skipping Node setup and dependency install."; fi
+
       - name: Setup Node.js
-        if: steps.shape.outputs.proceed == 'true' && steps.preflight.outputs.refused != 'true'
+        if: steps.shape.outputs.proceed == 'true' && steps.preflight.outputs.refused != 'true' && steps.node.outputs.present == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
 
       - name: Install dependencies
-        if: steps.shape.outputs.proceed == 'true' && steps.preflight.outputs.refused != 'true'
+        if: steps.shape.outputs.proceed == 'true' && steps.preflight.outputs.refused != 'true' && steps.node.outputs.present == 'true'
         run: ${{ inputs.install_command }}
 
       - name: Build prompt
