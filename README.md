@@ -54,12 +54,13 @@ when this repo's own code changes.
 
 A workflow's own token posts as `github-actions[bot]`. To comment as the Protocortex
 App instead, the triage stage has the agent write its comment as its final reply, then a
-separate step posts it through `https://factory.protocortex.ai/comment` with this run's
-GitHub OIDC token. The Worker checks the token, checks the call comes from one of these
+separate step posts it to the Worker's `/comment` endpoint with this run's
+GitHub OIDC token (the default is the Worker's `workers.dev` address, because Cloudflare Bot
+Fight Mode on the custom domain challenges GitHub runners). The Worker checks the token, checks the call comes from one of these
 workflows and that the App is installed on the repo, and posts as `protocortex[bot]`.
 The agent never holds a write token. If the endpoint can't be reached, the step posts with
-the workflow token instead, so a result is never lost. Point `comment_endpoint` at your own
-Worker to self-host. This needs the calling job to grant `id-token: write`, which the
+the workflow token instead, so a result is never lost. To self-host, set `comment_endpoint` to your Worker and `comment_audience` to its
+`OIDC_AUDIENCE`. This needs the calling job to grant `id-token: write`, which the
 generated stubs already do.
 
 ## Edge cases for a repo that calls these workflows
