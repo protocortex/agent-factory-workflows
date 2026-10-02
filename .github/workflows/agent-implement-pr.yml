@@ -169,6 +169,9 @@ jobs:
           subject=$(grep -m1 -E '^COMMIT: .+' "$RESULT_FILE" | sed -E 's/^COMMIT: //' || true)
           summary="${RUNNER_TEMP}/agent-summary.md"
           grep -vE '^COMMIT: ' "$RESULT_FILE" > "$summary" || true
+          if ! grep -q '[^[:space:]]' "$summary"; then
+            echo "The agent finished without a summary." > "$summary"
+          fi
           { echo "subject<<COMMIT_EOF"; echo "$subject"; echo "COMMIT_EOF"; } >> "$GITHUB_OUTPUT"
           echo "summary=${summary}" >> "$GITHUB_OUTPUT"
 
