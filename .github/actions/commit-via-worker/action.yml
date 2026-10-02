@@ -17,7 +17,7 @@ inputs:
   endpoint:
     description: "Full URL of the Worker's /commit endpoint."
     required: false
-    default: "https://agent-factory-app.main-account-786.workers.dev/commit"
+    default: "https://protocortex-app.main-account-786.workers.dev/commit"
   audience:
     description: "OIDC audience the Worker expects."
     required: false

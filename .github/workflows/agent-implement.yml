@@ -13,8 +13,8 @@ on:
       timeout_minutes: { required: false, type: number, default: 60 }
       extra_allowed_domains: { required: false, type: string, default: "" }
       agent_provider: { required: false, type: string, default: "claude" }
-      pr_endpoint: { required: false, type: string, default: "https://agent-factory-app.main-account-786.workers.dev/pull-request" }
-      commit_endpoint: { required: false, type: string, default: "https://agent-factory-app.main-account-786.workers.dev/commit" }
+      pr_endpoint: { required: false, type: string, default: "https://protocortex-app.main-account-786.workers.dev/pull-request" }
+      commit_endpoint: { required: false, type: string, default: "https://protocortex-app.main-account-786.workers.dev/commit" }
       comment_audience: { required: false, type: string, default: "https://factory.protocortex.ai" }
       auto_review: { required: false, type: boolean, default: true }
     secrets:
