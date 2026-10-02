@@ -203,8 +203,8 @@ jobs:
           3. Your final reply has two parts. The first line is `COMMIT: ` followed by a
              conventional commit subject, for example `COMMIT: fix: handle empty input`. After a
              blank line, write the PR description in Markdown: what changed and why, and how you
-             checked it. The workflow titles the PR "Fix #${{ inputs.issue_number }}: <issue title>"
-             and adds "Closes #${{ inputs.issue_number }}".
+             checked it. The workflow uses the COMMIT subject as the PR title and adds
+             "Closes #${{ inputs.issue_number }}" to the description.
 
           If you get stuck or the scope doesn't match what you find in the code, stop and explain
           why in your final reply, with no `COMMIT:` line, rather than guessing.
@@ -303,7 +303,7 @@ jobs:
         with:
           head: ${{ steps.branch.outputs.name }}
           base: ${{ steps.base.outputs.ref }}
-          title: "Fix #${{ inputs.issue_number }}: ${{ inputs.issue_title }}"
+          title: ${{ steps.reply.outputs.subject }}
           body_file: ${{ runner.temp }}/pr-body.md
           audience: ${{ inputs.comment_audience }}
           endpoint: ${{ inputs.pr_endpoint }}
