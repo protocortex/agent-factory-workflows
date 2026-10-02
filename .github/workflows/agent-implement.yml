@@ -13,6 +13,8 @@ on:
       timeout_minutes: { required: false, type: number, default: 60 }
       extra_allowed_domains: { required: false, type: string, default: "" }
       agent_provider: { required: false, type: string, default: "claude" }
+      pr_endpoint: { required: false, type: string, default: "https://agent-factory-app.main-account-786.workers.dev/pull-request" }
+      comment_audience: { required: false, type: string, default: "https://factory.protocortex.ai" }
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: { required: false }
       ANTHROPIC_API_KEY: { required: false }
@@ -170,9 +172,7 @@ jobs:
           3. Run this repo's build (`${{ inputs.build_command }}`) and its test command if one is
              discoverable from package.json; fix failures before proceeding.
           4. Commit with a clear message, then push the branch.
-          5. Open a draft PR (`gh pr create --draft --base main --head ${{ steps.branch.outputs.name }}`)
-             titled "Fix #${{ inputs.issue_number }}: ${{ inputs.issue_title }}" with a body that
-             includes "Closes #${{ inputs.issue_number }}".
+          5. ${{ inputs.agent_provider == 'claude' && format('Do not open the PR yourself. Your final reply must be the PR description in Markdown: what changed and why, and how you checked it. The workflow opens a draft PR titled "Fix #{0}: {1}" from it and adds "Closes #{0}".', inputs.issue_number, inputs.issue_title) || format('Open a draft PR (`gh pr create --draft --base main --head {0}`) titled "Fix #{1}: {2}" with a body that includes "Closes #{1}".', steps.branch.outputs.name, inputs.issue_number, inputs.issue_title) }}
 
           If you get stuck or the scope doesn't match what you find in the code, stop and explain why
           in a PR comment rather than guessing.
@@ -185,10 +185,11 @@ jobs:
           PROMPT_BLOCK
 
       - name: Implementation agent (Claude)
+        id: agent
         if: steps.shape.outputs.proceed == 'true' && steps.preflight.outputs.refused != 'true' && inputs.agent_provider == 'claude'
         env:
           BRANCH: ${{ steps.branch.outputs.name }}
-        uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1.5.1
+        uses: protocortex/agent-workflows/.github/actions/run-claude-agent@v1.6.0
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -196,7 +197,7 @@ jobs:
           model: ${{ inputs.model }}
           effort: ${{ inputs.effort }}
           max_turns: "40"
-          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git push:*),Bash(npm install:*),Bash(npm run:*),Bash(npm test:*),Bash(gh issue view:*),Bash(gh pr create:*)"
+          allowed_tools: "Read,Write,Edit,Glob,Grep,Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git push:*),Bash(npm install:*),Bash(npm run:*),Bash(npm test:*),Bash(gh issue view:*)"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
 
@@ -204,13 +205,66 @@ jobs:
         if: steps.shape.outputs.proceed == 'true' && steps.preflight.outputs.refused != 'true' && inputs.agent_provider == 'codex'
         env:
           BRANCH: ${{ steps.branch.outputs.name }}
-        uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1.5.1
+        uses: protocortex/agent-workflows/.github/actions/run-codex-agent@v1.6.0
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ inputs.model }}
           max_turns: "40"
           extra_allowed_domains: ${{ inputs.extra_allowed_domains }}
           prompt: ${{ steps.prompt.outputs.text }}
+
+      - name: Open the pull request as Protocortex
+        # The agent pushes the branch and writes the description. This step opens the PR through the
+        # Protocortex Worker, which verifies this run's OIDC token and opens it as the App, so the PR
+        # shows as opened by the bot. If the Worker can't be reached the PR is opened with the
+        # workflow token instead, so an implementation is never left without a PR.
+        if: steps.shape.outputs.proceed == 'true' && steps.preflight.outputs.refused != 'true' && inputs.agent_provider == 'claude'
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          RESULT_FILE: ${{ steps.agent.outputs.result_file }}
+          PR_ENDPOINT: ${{ inputs.pr_endpoint }}
+          PR_AUDIENCE: ${{ inputs.comment_audience }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')" ]; then
+            echo "A PR for $BRANCH is already open; leaving it alone."
+            exit 0
+          fi
+          if ! git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            echo "::error::The agent did not push $BRANCH. Its reply was:"
+            cat "$RESULT_FILE"
+            exit 1
+          fi
+
+          title="Fix #${ISSUE_NUMBER}: ${ISSUE_TITLE}"
+          description="${RUNNER_TEMP}/pr-description.md"
+          { cat "$RESULT_FILE"; printf '\n\nCloses #%s\n' "$ISSUE_NUMBER"; } > "$description"
+
+          open_with_workflow_token() {
+            echo "::warning::Opening the PR with the workflow token instead: $1"
+            gh pr create --draft --base main --head "$BRANCH" --title "$title" --body-file "$description"
+          }
+
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            open_with_workflow_token "this job has no id-token permission"
+            exit 0
+          fi
+          oidc=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${PR_AUDIENCE}" | jq -r '.value // empty') || oidc=""
+          if [ -z "$oidc" ]; then
+            open_with_workflow_token "could not get an OIDC token"
+            exit 0
+          fi
+
+          payload=$(jq -n --arg head "$BRANCH" --arg title "$title" --rawfile body "$description" \
+            '{head: $head, base: "main", title: $title, body: $body, draft: true}')
+          response="${RUNNER_TEMP}/pr-response.json"
+          code=$(curl -sS -o "$response" -w '%{http_code}' -X POST "$PR_ENDPOINT" \
+            -H "Authorization: Bearer ${oidc}" -H 'Content-Type: application/json' -d "$payload") || code="none"
+          if [ "$code" != "201" ] && [ "$code" != "200" ]; then
+            cat "$response" 2>/dev/null || true
+            open_with_workflow_token "the pull request endpoint answered ${code}"
+          fi
 
       - name: Request automated review
         # Must use a PAT, not GITHUB_TOKEN: label changes made with the default token do not
